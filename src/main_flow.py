@@ -1,6 +1,7 @@
 from metaflow import FlowSpec, step, current
 import os
 
+# Loading environment variables
 try:
     from dotenv import load_dotenv
     load_dotenv(verbose=True, dotenv_path='.env')
@@ -16,7 +17,9 @@ class main_flow(FlowSpec):
         Start-up: check everything works or fail fast!
         """
 
-        # print out some debug info
+        import kaggle as kg
+
+        # Print out some debug info
         print("flow name: %s" % current.flow_name)
         print("run id: %s" % current.run_id)
         print("username: %s" % current.username)
@@ -24,6 +27,28 @@ class main_flow(FlowSpec):
         # Ensure user has set the appropriate env variables
         assert os.environ['KAGGLE_USERNAME']
         assert os.environ['KAGGLE_KEY']
+
+        try:
+            kg.api.authenticate()
+            print("Authentication to Kaggle successful!")
+        except Exception as e:
+            print(f"Authentication failed! Error: {e}")
+
+        self.next(self.pull_data)
+
+    @step
+    def pull_data(self):
+        import kaggle as kg
+
+        print('Pulling data from Kaggle')
+        try:
+            file_path = '../data_raw/'
+            kg.api.dataset_download_files(dataset="edizaguirre/plants-dataset",
+                                          path=file_path,
+                                          unzip=True)
+            print(f"File download successful! Data is in {file_path}")
+        except Exception as e:
+            print(f"Download failed! Error: {e}")
 
         self.next(self.end)
 
@@ -33,7 +58,7 @@ class main_flow(FlowSpec):
         Just say bye!
         """
 
-        print("All done\n\nCongratulations!\n")
+        print("All done. \n\n Congratulations!\n")
         return
 
 
