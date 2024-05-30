@@ -1,2 +1,8 @@
+# Env folder
 .env
+
+# Raw data folder
 data_raw/
+
+# Metaflow
+.metaflow/
