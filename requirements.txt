@@ -1,1 +1,2 @@
 metaflow==2.12
+kaggle==1.6.3
