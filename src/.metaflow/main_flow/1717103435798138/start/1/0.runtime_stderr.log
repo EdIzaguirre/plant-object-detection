@@ -1,0 +1,39 @@
+[MFLOG|0|2024-05-30T21:10:36.021557Z|runtime|75fe5809-7996-453c-afd9-93955e078035]<flow main_flow step start> failed:
+[MFLOG|0|2024-05-30T21:10:36.026624Z|runtime|5c9c0fb9-9b27-4377-ac87-d100eaf42716]    Internal error
+[MFLOG|0|2024-05-30T21:10:36.027769Z|runtime|96ddb9ee-107d-4c51-bff3-4b31c48e8eef]Traceback (most recent call last):
+[MFLOG|0|2024-05-30T21:10:36.027854Z|runtime|b73c89d5-c7d8-4070-81b3-070fc81b5a94]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/cli.py", line 1069, in main
+[MFLOG|0|2024-05-30T21:10:36.027907Z|runtime|976d855c-a2aa-4ac1-8c36-88e29dec60f1]    start(auto_envvar_prefix="METAFLOW", obj=state)
+[MFLOG|0|2024-05-30T21:10:36.027946Z|runtime|56932f63-fb33-4dbb-aa6c-f21447437e0d]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/tracing/__init__.py", line 27, in wrapper_func
+[MFLOG|0|2024-05-30T21:10:36.027983Z|runtime|e59582f7-6921-4226-9077-1a210ccf7e73]    return func(args, kwargs)
+[MFLOG|0|2024-05-30T21:10:36.051088Z|runtime|ea6bf835-9975-496c-8db9-cdb5e49cef74]           ^^^^^^^^^^^^^^^^^^^^^
+[MFLOG|0|2024-05-30T21:10:36.051238Z|runtime|c128b1e0-16c8-480d-86ec-2736e95104bc]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/_vendor/click/core.py", line 829, in __call__
+[MFLOG|0|2024-05-30T21:10:36.051270Z|runtime|f3ba9939-b9bd-47c9-bb51-39e0b2c7af1e]    return self.main(args, kwargs)
+[MFLOG|0|2024-05-30T21:10:36.051303Z|runtime|9aa64c94-c526-47c2-b75d-f58e4edd8242]           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[MFLOG|0|2024-05-30T21:10:36.051327Z|runtime|71740717-1080-4eda-8947-62ce3dfba128]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/_vendor/click/core.py", line 782, in main
+[MFLOG|0|2024-05-30T21:10:36.051353Z|runtime|10293802-397c-45c0-b003-af8f6c473725]    rv = self.invoke(ctx)
+[MFLOG|0|2024-05-30T21:10:36.051377Z|runtime|445980d5-b7e5-49a4-b3b0-987fc6a88b2d]         ^^^^^^^^^^^^^^^^
+[MFLOG|0|2024-05-30T21:10:36.051403Z|runtime|b39dadeb-b58f-485f-bd8c-a0be00c02845]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/_vendor/click/core.py", line 1259, in invoke
+[MFLOG|0|2024-05-30T21:10:36.051429Z|runtime|5cd09815-db97-4e25-8dc0-54a3d5c72128]    return _process_result(sub_ctx.command.invoke(sub_ctx))
+[MFLOG|0|2024-05-30T21:10:36.051456Z|runtime|87473e65-da68-48b5-8b0d-96a102344ed2]                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[MFLOG|0|2024-05-30T21:10:36.051480Z|runtime|78a56c9c-68ad-48ce-a06f-e77b39c51ea4]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/_vendor/click/core.py", line 1066, in invoke
+[MFLOG|0|2024-05-30T21:10:36.051509Z|runtime|1eb12c8e-9154-42b1-8654-09855d2c3513]    return ctx.invoke(self.callback, ctx.params)
+[MFLOG|0|2024-05-30T21:10:36.051533Z|runtime|7075c614-9413-49fe-9591-02b58c3aa713]           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[MFLOG|0|2024-05-30T21:10:36.051559Z|runtime|5759a252-e597-4721-ab88-ae7eded6771c]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/_vendor/click/core.py", line 610, in invoke
+[MFLOG|0|2024-05-30T21:10:36.051584Z|runtime|bc676cab-21c0-4297-a298-1e23871423d2]    return callback(args, kwargs)
+[MFLOG|0|2024-05-30T21:10:36.051608Z|runtime|7eae38c0-0b26-4ac2-9e96-600dba20887b]           ^^^^^^^^^^^^^^^^^^^^^^^^^
+[MFLOG|0|2024-05-30T21:10:36.051633Z|runtime|351f1cd6-66c7-4a28-a1e0-cb41eecba52f]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/_vendor/click/decorators.py", line 21, in new_func
+[MFLOG|0|2024-05-30T21:10:36.051661Z|runtime|8ab6b2ac-e6e1-4b10-8bfe-6ed1fc46b2cf]    return f(get_current_context(), args, kwargs)
+[MFLOG|0|2024-05-30T21:10:36.051687Z|runtime|70718c33-babc-4150-8f12-e16cd8ba87f1]           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[MFLOG|0|2024-05-30T21:10:36.051713Z|runtime|7daa2d11-fcc5-4c31-b5aa-067a08e7b1b8]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/cli.py", line 446, in step
+[MFLOG|0|2024-05-30T21:10:36.051739Z|runtime|3475fd66-3e86-4e5c-99aa-03feb2a87d15]    task.run_step(
+[MFLOG|0|2024-05-30T21:10:36.051766Z|runtime|97af772d-4b33-403d-87c7-477c677852c0]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/task.py", line 608, in run_step
+[MFLOG|0|2024-05-30T21:10:36.051790Z|runtime|e969b7eb-06f4-4fe9-af08-6fbf7480fb4b]    self._exec_step_function(step_func)
+[MFLOG|0|2024-05-30T21:10:36.051814Z|runtime|56c38082-714c-455d-9c13-6fa4ffc0ae7b]  File "/Users/ed/miniconda3/envs/plant-object-detection/lib/python3.12/site-packages/metaflow/task.py", line 59, in _exec_step_function
+[MFLOG|0|2024-05-30T21:10:36.051841Z|runtime|bfd971b5-b398-4d77-8c9a-304a3e371af4]    step_function()
+[MFLOG|0|2024-05-30T21:10:36.051865Z|runtime|32d013a6-3fc1-4cb0-936d-fc73d405c9fc]  File "/Users/ed/Developer/plant-object-detection/src/main_flow.py", line 24, in start
+[MFLOG|0|2024-05-30T21:10:36.051890Z|runtime|454dc799-74f9-47ef-ae6c-019a2d1377cd]    assert os.environ['KAGGLE_USERNAME']
+[MFLOG|0|2024-05-30T21:10:36.051914Z|runtime|71aac5a4-00a6-49ef-bf06-8943c88a9e5a]           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+[MFLOG|0|2024-05-30T21:10:36.051940Z|runtime|597651c3-2826-4e35-8172-7fd34e13ba60]  File "<frozen os>", line 685, in __getitem__
+[MFLOG|0|2024-05-30T21:10:36.051964Z|runtime|dcd735c5-3300-4e0c-8ec9-ffd177f1dd01]KeyError: 'KAGGLE_USERNAME'
+[MFLOG|0|2024-05-30T21:10:36.051987Z|runtime|7599fe47-f41e-47e0-8976-d0c63097247d]
+[MFLOG|0|2024-05-30T21:10:36.052431Z|runtime|87dcc792-b1c2-4f03-bcd5-b5c5e9b34408]Task failed.
