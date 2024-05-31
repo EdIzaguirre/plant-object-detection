@@ -4,7 +4,7 @@ import json
 import os
 
 # aws apigateway get-api-key --api-key <YOUR_KEY_ID_FROM_CFN> --include-value | grep value
-# STACK_NAME=metaflow
+# STACK_NAME=metaflow-v2
 # python mf_configure.py -s $STACK_NAME
 
 MF_CONFIG_VARS_TO_CFN_OUTPUT_KEYS = {
