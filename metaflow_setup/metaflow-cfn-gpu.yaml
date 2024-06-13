@@ -4,7 +4,7 @@ Description: Stack for complete deployment of Metaflow (last-updated-date 10/26/
 Parameters:
   SagemakerInstance:
     Type: String
-    Default: ml.t2.xlarge
+    Default: ml.t2.large
     AllowedValues: ['ml.t2.large','ml.t2.xlarge','ml.t2.2xlarge']
     Description: 'Instance type for Sagemaker Notebook.'
   VPCCidr:
