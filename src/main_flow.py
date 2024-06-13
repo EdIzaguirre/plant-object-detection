@@ -1,4 +1,4 @@
-from metaflow import FlowSpec, step, current, conda_base, conda, batch
+from metaflow import FlowSpec, step, current, batch, S3, conda, conda_base, environment, retry
 import os
 from custom_decorators import pip
 
@@ -10,7 +10,7 @@ except ImportError:
     print("Env file not found!")
 
 
-# @conda_base(python='3.12.3')
+@conda_base(python='3.11.9')
 class main_flow(FlowSpec):
 
     @step
@@ -27,58 +27,59 @@ class main_flow(FlowSpec):
         # Ensure user has set the appropriate env variables
         assert os.environ['KAGGLE_USERNAME']
         assert os.environ['KAGGLE_KEY']
+        assert os.environ['S3_BUCKET_ADDRESS']
 
-        self.next(self.pull_data)
+        self.next(self.parse_and_transform_records)
 
-    # @conda(libraries={'kaggle': '1.6.14'})
+    @conda(libraries={'keras-cv': '0.9.0', 'tensorflow': '2.15', 'pycocotools': '2.0.6'})
+    @batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow",)
+    @environment(vars={
+        "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS')})
     @step
-    def pull_data(self):
+    def parse_and_transform_records(self):
         import tensorflow as tf
-        import kaggle as kg
 
-        print('Pulling data from Kaggle')
+        tf.config.optimizer.set_jit(False)
+        os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
 
-        # Checking authentication
-        try:
-            kg.api.authenticate()
-            print("Authentication to Kaggle successful!")
-        except Exception as e:
-            print(f"Authentication failed! Error: {e}")
+        from utils import parse_tfrecord_fn, dict_to_tuple, visualize_detections, class_mapping, create_model
+        import keras
+        import keras_cv
 
-        # Attempting download
-        try:
-            self.file_path = '../data_raw/'
-            kg.api.dataset_download_files(dataset="edizaguirre/plants-dataset",
-                                          path=self.file_path,
-                                          unzip=True)
-            print(f"File download successful! Data is in {self.file_path}")
-        except Exception as e:
-            print(f"Download failed! Error: {e}")
+        file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
 
-        train_tfrecord_file = f'{self.file_path}leaves.tfrecord'
-        val_tfrecord_file = f'{self.file_path}test_leaves.tfrecord'
+        with S3() as s3:
+            train_dataset_blob = s3.get(file_path + 'leaves.tfrecord').blob
+            val_dataset_blob = s3.get(file_path + 'test_leaves.tfrecord').blob
+
+        # Check the type and size of the blobs
+        print(f"Train Dataset Blob Type: {type(train_dataset_blob)}, Size: {len(train_dataset_blob)} bytes")
+        print(f"Validation Dataset Blob Type: {type(val_dataset_blob)}, Size: {len(val_dataset_blob)} bytes")
+
+        # train_tfrecord_file = '../data_raw/leaves.tfrecord'
+        # val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
+
+        # Write the blobs to local files for TensorFlow to read
+        train_tfrecord_file = 'train_leaves.tfrecord'
+        val_tfrecord_file = 'val_test_leaves.tfrecord'
+
+        with open(train_tfrecord_file, 'wb') as f:
+            f.write(train_dataset_blob)
+
+        with open(val_tfrecord_file, 'wb') as f:
+            f.write(val_dataset_blob)
 
         # Create a TFRecordDataset
         train_dataset = tf.data.TFRecordDataset([train_tfrecord_file])
         val_dataset = tf.data.TFRecordDataset([val_tfrecord_file])
 
-        self.next(self.parse_and_transform_records)
-
-    # @conda(libraries={'tensorflow': '2.16.1', 'keras-cv': '0.9.0'})
-    @batch(gpu=1,
-           image="docker.io/tensorflow/tensorflow:latest-gpu",
-           queue="job-queue-gpu-metaflow-v2",
-           )
-    @pip(libraries={'keras-cv': '0.9.0'})
-    @step
-    def parse_and_transform_records(self):
-        import tensorflow as tf
-        from utils import parse_tfrecord_fn, dict_to_tuple, visualize_detections, class_mapping, create_model
-        import keras
-        import keras_cv
+        # Iterate over a few entries and print their content. Uncomment this to look at the raw data
+        # for record in train_dataset.take(1):
+        #     example = tf.train.Example()
+        #     example.ParseFromString(record.numpy())
+        #     print(example)
 
         print('Parsing raw data and augmenting images')
-
         train_dataset = train_dataset.map(parse_tfrecord_fn)
         val_dataset = val_dataset.map(parse_tfrecord_fn)
 
@@ -94,6 +95,10 @@ class main_flow(FlowSpec):
 
         train_dataset = train_dataset.ragged_batch(BATCH_SIZE).prefetch(buffer_size=AUTOTUNE)
         val_dataset = val_dataset.ragged_batch(BATCH_SIZE).prefetch(buffer_size=AUTOTUNE)
+
+        # Testing with only one batch
+        train_dataset = train_dataset.take(1)
+        val_dataset = val_dataset.take(1)
 
         # Defining augmentations
         augmenter = keras.Sequential(
@@ -113,10 +118,12 @@ class main_flow(FlowSpec):
             IMG_SIZE, IMG_SIZE, pad_to_aspect_ratio=True, bounding_box_format=BBOX_FORMAT
         )
 
+        print('Augmenting data')
         # Creating artifacts to visualize in notebook
         train_dataset = train_dataset.map(augmenter, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(inference_resizing, num_parallel_calls=tf.data.AUTOTUNE)
 
+        print('Conversion to tuples')
         # Converting data into tuples suitable for training
         train_dataset = train_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
@@ -142,10 +149,10 @@ class main_flow(FlowSpec):
         checkpoint_path = "best-custom-model.weights.h5"
 
         callbacks_list = [
-            # Conducting early stopping to stop after 6 epochs of non-improving validation loss
+            # Conducting early stopping to stop after 2 epochs of non-improving validation loss
             keras.callbacks.EarlyStopping(
                 monitor="val_loss",
-                patience=6,
+                patience=2,
             ),
 
             # Saving the best model
@@ -185,13 +192,16 @@ class main_flow(FlowSpec):
             classification_loss="focal",
             box_loss="smoothl1",
             optimizer=optimizer_Adam,
-            metrics=[coco_metrics]
+            metrics=[coco_metrics],
+            jit_compile=False
         )
 
+        print('Beginning model fitting')
         history = model.fit(
             train_dataset,
             validation_data=val_dataset,
             epochs=40,
+            # epochs=1,
             callbacks=callbacks_list,
             verbose=1,
         )
