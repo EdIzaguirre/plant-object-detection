@@ -25,8 +25,9 @@ class main_flow(FlowSpec):
         print("username: %s" % current.username)
 
         # Ensure user has set the appropriate env variables
-        assert os.environ['KAGGLE_USERNAME']
-        assert os.environ['KAGGLE_KEY']
+        assert os.environ['WANDB_API_KEY']
+        assert os.environ['WANDB_ENTITY']
+        assert os.environ['WANDB_PROJECT']
         assert os.environ['S3_BUCKET_ADDRESS']
 
         self.next(self.train_model)
