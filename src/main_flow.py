@@ -1,6 +1,6 @@
-from metaflow import FlowSpec, step, current, batch, S3, conda, conda_base, environment, retry
-import os
+from metaflow import FlowSpec, step, current, batch, S3, conda, conda_base, environment, retry, pypi
 from custom_decorators import pip
+import os
 
 # Loading environment variables
 try:
@@ -10,7 +10,7 @@ except ImportError:
     print("Env file not found!")
 
 
-@conda_base(python='3.11.9')
+# @conda_base(python='3.11.9')
 class main_flow(FlowSpec):
 
     @step
@@ -29,35 +29,41 @@ class main_flow(FlowSpec):
         assert os.environ['KAGGLE_KEY']
         assert os.environ['S3_BUCKET_ADDRESS']
 
-        self.next(self.parse_and_transform_records)
+        self.next(self.train_model)
 
-    @conda(libraries={'keras-cv': '0.9.0', 'tensorflow': '2.15', 'pycocotools': '2.0.6'})
-    @batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow",)
-    @environment(vars={
-        "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS')})
+    @pip(libraries={'tensorflow': '2.16.1', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.1'})
+    # @batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow")
+    # @batch(memory=15360, queue="job-queue-metaflow")
+    # @environment(vars={
+    #     "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
+    #     'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
+    #     'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
+    #     'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
     @step
-    def parse_and_transform_records(self):
+    def train_model(self):
         import tensorflow as tf
 
-        tf.config.optimizer.set_jit(False)
-        os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
+        # tf.config.optimizer.set_jit(False)
+        # os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
 
         from utils import parse_tfrecord_fn, dict_to_tuple, visualize_detections, class_mapping, create_model
         import keras
         import keras_cv
+        import wandb
+        from wandb.integration.keras import WandbMetricsLogger, WandbModelCheckpoint
+
+        assert os.getenv('WANDB_API_KEY')
+        assert os.getenv('WANDB_ENTITY')
+        assert os.getenv('WANDB_PROJECT')
+
+        print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+        # tf.keras.mixed_precision.set_global_policy('mixed_float16')
 
         file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
 
         with S3() as s3:
             train_dataset_blob = s3.get(file_path + 'leaves.tfrecord').blob
             val_dataset_blob = s3.get(file_path + 'test_leaves.tfrecord').blob
-
-        # Check the type and size of the blobs
-        print(f"Train Dataset Blob Type: {type(train_dataset_blob)}, Size: {len(train_dataset_blob)} bytes")
-        print(f"Validation Dataset Blob Type: {type(val_dataset_blob)}, Size: {len(val_dataset_blob)} bytes")
-
-        # train_tfrecord_file = '../data_raw/leaves.tfrecord'
-        # val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
 
         # Write the blobs to local files for TensorFlow to read
         train_tfrecord_file = 'train_leaves.tfrecord'
@@ -79,27 +85,39 @@ class main_flow(FlowSpec):
         #     example.ParseFromString(record.numpy())
         #     print(example)
 
-        print('Parsing raw data and augmenting images')
         train_dataset = train_dataset.map(parse_tfrecord_fn)
         val_dataset = val_dataset.map(parse_tfrecord_fn)
 
         # Batching
-        BATCH_SIZE = 32
         # Adding autotune for pre-fetching
         AUTOTUNE = tf.data.experimental.AUTOTUNE
-        # Other constants
-        NUM_ROWS = 4
-        NUM_COLS = 8
         IMG_SIZE = 416
         BBOX_FORMAT = "xyxy"
 
-        train_dataset = train_dataset.ragged_batch(BATCH_SIZE).prefetch(buffer_size=AUTOTUNE)
-        val_dataset = val_dataset.ragged_batch(BATCH_SIZE).prefetch(buffer_size=AUTOTUNE)
+        # Start a run, tracking hyperparameters
+        wandb.init(
+            project=os.getenv('WANDB_PROJECT'),
+            entity=os.getenv('WANDB_ENTITY'),
+            config={
+                "base_lr": 0.0001,
+                "loss": "sparse_categorical_crossentropy",
+                "epoch": 5,
+                "batch_size": 16,
+                "classification_loss": "focal",
+                "box_loss": "smoothl1"
+            }
+        )
+
+        config = wandb.config
+
+        train_dataset = train_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=AUTOTUNE)
+        val_dataset = val_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=AUTOTUNE)
 
         # Testing with only one batch
         train_dataset = train_dataset.take(1)
         val_dataset = val_dataset.take(1)
 
+        print('Augmenting data')
         # Defining augmentations
         augmenter = keras.Sequential(
             [
@@ -118,33 +136,24 @@ class main_flow(FlowSpec):
             IMG_SIZE, IMG_SIZE, pad_to_aspect_ratio=True, bounding_box_format=BBOX_FORMAT
         )
 
-        print('Augmenting data')
-        # Creating artifacts to visualize in notebook
+        # Augmenting training set/resizing validation set
         train_dataset = train_dataset.map(augmenter, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(inference_resizing, num_parallel_calls=tf.data.AUTOTUNE)
 
-        print('Conversion to tuples')
         # Converting data into tuples suitable for training
         train_dataset = train_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
 
-        base_lr = 0.0001
-        # including a global_clipnorm is extremely important in object detection tasks
-        optimizer_Adam = tf.keras.optimizers.Adam(
-            learning_rate=base_lr,
+        # Including a global_clipnorm is extremely important in object detection tasks
+        # optimizer_Adam = tf.keras.optimizers.Adam(
+        optimizer_Adam = tf.keras.optimizers.legacy.Adam(
+            learning_rate=config.base_lr,
             global_clipnorm=10.0
         )
 
         coco_metrics = keras_cv.metrics.BoxCOCOMetrics(
             bounding_box_format=BBOX_FORMAT, evaluate_freq=5
         )
-
-        class VisualizeDetections(keras.callbacks.Callback):
-            def on_epoch_end(self, epoch, logs):
-                if (epoch + 1) % 5 == 0:
-                    visualize_detections(
-                        self.model, bounding_box_format=BBOX_FORMAT, dataset=val_dataset, rows=NUM_ROWS, cols=NUM_COLS
-                    )
 
         checkpoint_path = "best-custom-model.weights.h5"
 
@@ -172,9 +181,9 @@ class main_flow(FlowSpec):
                       f"Validation Loss: {logs['val_loss']:.4f} \n" +
                       f"Validation mAP: {logs['val_MaP']:.4f} \n")
             ),
+            WandbMetricsLogger(log_freq=5),
 
-            # Visualizing results after each n epoch
-            VisualizeDetections()
+            WandbModelCheckpoint("models")
         ]
 
         model = create_model(format=BBOX_FORMAT)
@@ -189,8 +198,8 @@ class main_flow(FlowSpec):
 
         # Using focal classification loss and smoothl1 box loss with coco metrics
         model.compile(
-            classification_loss="focal",
-            box_loss="smoothl1",
+            classification_loss=config.classification_loss,
+            box_loss=config.box_loss,
             optimizer=optimizer_Adam,
             metrics=[coco_metrics],
             jit_compile=False
@@ -200,11 +209,17 @@ class main_flow(FlowSpec):
         history = model.fit(
             train_dataset,
             validation_data=val_dataset,
-            epochs=40,
-            # epochs=1,
+            epochs=config.epoch,
             callbacks=callbacks_list,
             verbose=1,
         )
+
+        wandb.finish()
+
+        self.model = {
+            'model': model.to_json(),
+            'model_weights': model.get_weights()
+        }
 
         self.next(self.end)
 

@@ -148,6 +148,41 @@ def create_model(format):
     )
     return model
 
+def _save_dataset(self, dataset, filename):
+    import tensorflow as tf
+
+    writer = tf.data.experimental.TFRecordWriter(filename)
+    writer.write(dataset.map(self._serialize_example))
+
+def _serialize_example(self, example):
+    import tensorflow as tf
+
+    return tf.train.Example(
+        features=tf.train.Features(
+            feature={
+                key: tf.train.Feature(bytes_list=tf.train.BytesList(value=[tf.io.serialize_tensor(tensor).numpy()]))
+                for key, tensor in example.items()
+            }
+        )
+    ).SerializeToString()
+
+def _load_dataset(self, filename):
+    import tensorflow as tf
+
+    raw_dataset = tf.data.TFRecordDataset([filename])
+    return raw_dataset.map(self._deserialize_example)
+
+def _deserialize_example(self, serialized_example):
+    import tensorflow as tf
+
+    feature_description = {
+        'feature': tf.io.FixedLenFeature([], tf.string),
+        # Add other features here
+    }
+    example = tf.io.parse_single_example(serialized_example, feature_description)
+    return {key: tf.io.parse_tensor(tensor, out_type=tf.float32) for key, tensor in example.items()}
+
+
 class_mapping = {
     1: 'Apple Scab Leaf',
     2: 'Apple leaf',
