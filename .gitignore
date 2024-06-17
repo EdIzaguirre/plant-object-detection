@@ -6,3 +6,19 @@ data_raw/
 
 # Metaflow
 .metaflow/
+
+# Don't include tfrecords
+src/train_leaves.tfrecord
+src/val_test_leaves.tfrecord
+
+# Don't include model weights
+src/best-custom-model.weights.h5
+
+# Don't include these folders
+src/models/
+src/wandb/
+src/__pycache__
+src/metaflow.s3.*/
+
+.DS_Store
+**/.DS_Store
