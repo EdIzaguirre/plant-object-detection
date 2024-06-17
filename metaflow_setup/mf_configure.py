@@ -33,6 +33,8 @@ def fetch_config_vars(stack_name: str) -> dict:
         cfg_var: outputs_dict[cfn_output_key]
         for cfg_var, cfn_output_key in MF_CONFIG_VARS_TO_CFN_OUTPUT_KEYS.items()
     }
+    bucket_address = cfg_dict['METAFLOW_DATATOOLS_S3ROOT'].split('/')[2]
+    print(f"Address of S3 bucket: {bucket_address}")
     cfg_dict |= EXTRA_ARGS
     return cfg_dict
 

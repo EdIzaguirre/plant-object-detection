@@ -4,7 +4,7 @@ Description: Stack for complete deployment of Metaflow (last-updated-date 10/26/
 Parameters:
   SagemakerInstance:
     Type: String
-    Default: ml.t2.xlarge
+    Default: ml.t2.large
     AllowedValues: ['ml.t2.large','ml.t2.xlarge','ml.t2.2xlarge']
     Description: 'Instance type for Sagemaker Notebook.'
   VPCCidr:
@@ -33,7 +33,7 @@ Parameters:
     Description: 'Maximum VCPUs for Batch Compute Environment [16-256] in your GPU compute environment. You can change the upper limit by editing the Cloudformation template.'
   MinVCPUBatch:
     Type: Number
-    Default: 8
+    Default: 0
     MinValue: 0
     MaxValue: 16
     AllowedValues: [0,2,4,8,16]
@@ -61,12 +61,12 @@ Parameters:
     Description: 'Enable custom role with restricted permissions?'
   APIBasicAuth:
     Type: String
-    Default: 'true'
+    Default: 'false'
     AllowedValues: ['false', 'true']
     Description: 'Enable basic auth for API Gateway? (requires you to export the API key from API Gateway console)'
   EnableSagemaker:
     Type: String
-    Default: 'true'
+    Default: 'false'
     AllowedValues: ['false', 'true']
     Description: 'Enable Sagemaker Notebooks'
   BatchType:
@@ -603,11 +603,12 @@ Resources:
     Properties:
       DBName: 'metaflow'
       AllocatedStorage: 20
-      DBInstanceClass: 'db.t3.small'
+      # DBInstanceClass: 'db.t3.small'
+      DBInstanceClass: 'db.t4g.micro'
       DeleteAutomatedBackups: 'true'
       StorageType: 'gp2'
       Engine: 'postgres'
-      EngineVersion: '11'
+      EngineVersion: '12'
       MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref MyRDSSecret, ':SecretString:username}}' ]]
       MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref MyRDSSecret, ':SecretString:password}}' ]]
       VPCSecurityGroups:
