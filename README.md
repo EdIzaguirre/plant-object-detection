@@ -16,7 +16,7 @@ for the remixing, transforming, and building upon the images for any purpose, ev
 ## Metaflow
 This project uses Metaflow as the orchestration tool and infrastructure abstraction tool. Below you can see what tools are used for this project.
 
-![Flow used for this project](images/metaflow_chart.png)
+![Flow used for this project](images/flow_image.png)
 
 - **Data transformation: KerasCV**. This is a horizontal extension of the Keras library that includes many helpful abstractons for computer vision tasks, in this
   case object detection. The pre-trained RetinaNet model is also obtained from the KerasCV library.
