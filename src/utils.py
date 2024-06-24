@@ -183,6 +183,27 @@ def _deserialize_example(self, serialized_example):
     return {key: tf.io.parse_tensor(tensor, out_type=tf.float32) for key, tensor in example.items()}
 
 
+def convert_format_tf_to_wandb(box_list, classes_list):
+    all_boxes = []
+    for b_i, box in enumerate(box_list):
+        minX, maxX, minY, maxY = int(box[0]), int(box[2]), int(box[1]), int(box[3])
+        class_id = int(classes_list[b_i])
+        # get coordinates and labels
+        box_data = {
+            "position": {
+                "minX": minX,
+                "maxX": maxX,
+                "minY": minY,
+                "maxY": maxY},
+            "class_id": class_id,
+            "box_caption": class_mapping[class_id],
+            "domain": "pixel",
+        }
+        all_boxes.append(box_data)
+
+    return all_boxes
+
+
 class_mapping = {
     1: 'Apple Scab Leaf',
     2: 'Apple leaf',
