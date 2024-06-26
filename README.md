@@ -5,7 +5,7 @@ Can we use machine learning to detect diseases in plants?
 
 ## Overview
 This is a production-grade machine learning application that uses object detection to localize and classify diseases in plants. This is meant to be an educational project for machine learning engineers
-to learn how to create an end-to-end computer vision application using Metaflow as the infrastructure abstraction tool. Inspiration was taken from the notable 
+to learn how to create an end-to-end computer vision application using Metaflow as the primary orchestration tool. Inspiration was taken from the notable 
 [You Don't Need a Bigger Boat](https://github.com/jacopotagliabue/you-dont-need-a-bigger-boat) repo, which shows a more complicated flow based on training a recommendation model.
 
 ## Data Source
