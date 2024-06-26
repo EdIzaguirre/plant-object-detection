@@ -32,14 +32,14 @@ class main_flow(FlowSpec):
 
         self.next(self.train_model)
 
-    @pip(libraries={'tensorflow': '2.16.1', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.1'})
-    # @batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow")
+    @pip(libraries={'tensorflow': '2.15.1', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.1'})
+    @batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow")
     # @batch(memory=15360, queue="job-queue-metaflow")
-    # @environment(vars={
-    #     "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
-    #     'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
-    #     'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
-    #     'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
+    @environment(vars={
+        "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
+        'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
+        'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
+        'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
     @step
     def train_model(self):
         import tensorflow as tf
@@ -52,6 +52,7 @@ class main_flow(FlowSpec):
         import keras_cv
         import wandb
         from wandb.integration.keras import WandbMetricsLogger, WandbModelCheckpoint
+        import numpy as np
 
         assert os.getenv('WANDB_API_KEY')
         assert os.getenv('WANDB_ENTITY')
@@ -61,24 +62,24 @@ class main_flow(FlowSpec):
         # tf.keras.mixed_precision.set_global_policy('mixed_float16')
 
         # Uncomment if working with AWS Batch
-        # file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
+        file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
 
-        # with S3() as s3:
-        #     train_dataset_blob = s3.get(file_path + 'leaves.tfrecord').blob
-        #     val_dataset_blob = s3.get(file_path + 'test_leaves.tfrecord').blob
+        with S3() as s3:
+            train_dataset_blob = s3.get(file_path + 'leaves.tfrecord').blob
+            val_dataset_blob = s3.get(file_path + 'test_leaves.tfrecord').blob
 
-        # # Write the blobs to local files for TensorFlow to read
-        # train_tfrecord_file = 'train_leaves.tfrecord'
-        # val_tfrecord_file = 'val_test_leaves.tfrecord'
+        # Write the blobs to local files for TensorFlow to read
+        train_tfrecord_file = 'train_leaves.tfrecord'
+        val_tfrecord_file = 'val_test_leaves.tfrecord'
 
-        # with open(train_tfrecord_file, 'wb') as f:
-        #     f.write(train_dataset_blob)
+        with open(train_tfrecord_file, 'wb') as f:
+            f.write(train_dataset_blob)
 
-        # with open(val_tfrecord_file, 'wb') as f:
-        #     f.write(val_dataset_blob)
+        with open(val_tfrecord_file, 'wb') as f:
+            f.write(val_dataset_blob)
 
-        train_tfrecord_file = '../data_raw/leaves.tfrecord'
-        val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
+        # train_tfrecord_file = '../data_raw/leaves.tfrecord'
+        # val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
 
         # Create a TFRecordDataset
         train_dataset = tf.data.TFRecordDataset([train_tfrecord_file])
@@ -213,7 +214,7 @@ class main_flow(FlowSpec):
             jit_compile=False
         )
 
-        # print('Beginning model fitting')
+        print('Beginning model training')
         history = model.fit(
             train_dataset,
             validation_data=val_dataset,
@@ -223,8 +224,8 @@ class main_flow(FlowSpec):
         )
 
         # Create model with the weights of the best model
-        model = create_model(format=BBOX_FORMAT)
-        model.load_weights(checkpoint_path)
+        # model = create_model(format=BBOX_FORMAT)
+        # model.load_weights(checkpoint_path)
         from keras_cv import bounding_box
 
         class_set = wandb.Classes([
@@ -236,25 +237,12 @@ class main_flow(FlowSpec):
             columns=["Ground Truth", "Predictions"]
         )
 
-        images, _ = next(iter(val_dataset.take(1)))  # Batch of 16 images/bounding boxes
-
-        print(f"Shape of images to predict on: {images.shape}")  # (16, 416, 416, 3)
-        y_pred = model.predict(images)
-        print(f"Shape of predicted bounding boxes: {y_pred['boxes'].shape}")
-        print(f"Shape of predicted classes: {y_pred['classes'].shape}")
-        y_pred = bounding_box.to_ragged(y_pred)
-        print(f"Shape of ragged predicted bounding boxes: {y_pred['boxes'].shape}")
-        print(f"Shape of ragged predicted classes: {y_pred['classes'].shape}")
-
         # Resetting val dataset, removing augmentations
         val_dataset = tf.data.TFRecordDataset([val_tfrecord_file])
         val_dataset = val_dataset.map(parse_tfrecord_fn)
 
         for example in val_dataset.take(config.num_examples):
             image, bounding_box_dict = example["images"].numpy(), example["bounding_boxes"]
-            print(f"y-pred: {y_pred}")
-            print(f"image: {image}")
-            print(f"bounding_box_dict: {bounding_box_dict}")
             boxes = bounding_box_dict['boxes'].numpy()
             classes = bounding_box_dict['classes'].numpy()
 
@@ -270,7 +258,6 @@ class main_flow(FlowSpec):
                     }
                 }
             )
-            print("Model predicting")
 
             # Temp fake data for testing of wandb bounding box evals
             # values = [
@@ -297,14 +284,19 @@ class main_flow(FlowSpec):
             #     'classes': fake_classes,
             #     # 'num_detections': np.array()
             # }
+            
+            # Get image as a tensor, include a batch dimension
+            image = example["images"]
+            image = tf.expand_dims(image, axis=0)  # Shape: (1, 416, 416, 3)
 
-            y_pred = model.predict(images)
+            # Get predicted bounding boxes on image
+            y_pred = model.predict(image)
+            y_pred = bounding_box.to_ragged(y_pred)
+
+            print(f"y_pred: {y_pred}")
 
             boxes = y_pred['boxes']
             classes = y_pred['classes']
-
-            print(f"Shape of fake ragged predicted bounding boxes: {boxes.shape}")
-            print(f"Shape of fake ragged predicted classes: {classes.shape}")
 
             # Convert the ragged tensor to a list of lists
             box_list = boxes.to_list()
@@ -313,19 +305,32 @@ class main_flow(FlowSpec):
             # Remove batch dimension
             box_list = box_list[0]
             classes_list = classes_list[0]
-            
-            all_boxes = convert_format_tf_to_wandb(box_list=box_list, classes_list=classes_list)
 
-            predicted_image = wandb.Image(
-                image,
-                classes=class_set,
-                boxes={
-                    "ground_truth": {
-                        "box_data": all_boxes,
-                        "class_labels": class_mapping,
+            print(f"boxes: {box_list}")
+            # print(f"Shape of predicted bounding boxes: {box_list.shape}")
+            print(f"classes: {classes_list}")
+            # print(f"Shape of predicted classes: {classes_list.shape}")
+
+            is_empty = tf.equal(tf.size(box_list), 0)
+
+            if is_empty:
+                print("No bounding boxes predicted")
+                predicted_image = wandb.Image(
+                    image
+                )
+            else:
+                all_boxes = convert_format_tf_to_wandb(box_list=box_list, classes_list=classes_list)
+
+                predicted_image = wandb.Image(
+                    image,
+                    classes=class_set,
+                    boxes={
+                        "ground_truth": {
+                            "box_data": all_boxes,
+                            "class_labels": class_mapping,
+                        }
                     }
-                }
-            )
+                )
 
             table.add_data(ground_truth_image, predicted_image)
 

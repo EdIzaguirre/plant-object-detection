@@ -184,6 +184,10 @@ def _deserialize_example(self, serialized_example):
 
 
 def convert_format_tf_to_wandb(box_list, classes_list):
+    """
+    Function to convert a box_list output by 
+    
+    """
     all_boxes = []
     for b_i, box in enumerate(box_list):
         minX, maxX, minY, maxY = int(box[0]), int(box[2]), int(box[1]), int(box[3])
