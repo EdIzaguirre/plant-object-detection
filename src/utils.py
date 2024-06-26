@@ -1,7 +1,6 @@
 import tensorflow as tf
 import keras_cv
 from keras_cv import bounding_box, visualization
-import keras
 
 
 def parse_tfrecord_fn(example):
@@ -139,54 +138,54 @@ def dict_to_tuple(inputs):
     )
 
 
-def create_model(format):
+def create_model(config):
     # Building a RetinaNet model with a backbone trained on yolo_v8
     model = keras_cv.models.RetinaNet.from_preset(
         "yolo_v8_m_backbone_coco",
         num_classes=len(class_mapping),
-        bounding_box_format=format
+        bounding_box_format=config.bbox_format
+    )
+
+    # Customizing non-max supression of model prediction.
+    model.prediction_decoder = keras_cv.layers.MultiClassNonMaxSuppression(
+        bounding_box_format=config.bbox_format,
+        from_logits=True,
+        iou_threshold=0.5,
+        confidence_threshold=0.5,
+    )
+
+    optimizer_Adam = tf.keras.optimizers.legacy.Adam(
+        learning_rate=config.base_lr,
+        global_clipnorm=10.0
+    )
+
+    coco_metrics = keras_cv.metrics.BoxCOCOMetrics(
+        bounding_box_format=config.bbox_format, evaluate_freq=5
+    )
+
+    # Using focal classification loss and smoothl1 box loss with coco metrics
+    model.compile(
+        classification_loss=config.classification_loss,
+        box_loss=config.box_loss,
+        optimizer=optimizer_Adam,
+        metrics=[coco_metrics],
+        jit_compile=False
     )
     return model
 
-def _save_dataset(self, dataset, filename):
-    import tensorflow as tf
 
-    writer = tf.data.experimental.TFRecordWriter(filename)
-    writer.write(dataset.map(self._serialize_example))
-
-def _serialize_example(self, example):
-    import tensorflow as tf
-
-    return tf.train.Example(
-        features=tf.train.Features(
-            feature={
-                key: tf.train.Feature(bytes_list=tf.train.BytesList(value=[tf.io.serialize_tensor(tensor).numpy()]))
-                for key, tensor in example.items()
-            }
-        )
-    ).SerializeToString()
-
-def _load_dataset(self, filename):
-    import tensorflow as tf
-
-    raw_dataset = tf.data.TFRecordDataset([filename])
-    return raw_dataset.map(self._deserialize_example)
-
-def _deserialize_example(self, serialized_example):
-    import tensorflow as tf
-
-    feature_description = {
-        'feature': tf.io.FixedLenFeature([], tf.string),
-        # Add other features here
-    }
-    example = tf.io.parse_single_example(serialized_example, feature_description)
-    return {key: tf.io.parse_tensor(tensor, out_type=tf.float32) for key, tensor in example.items()}
-
-
-def convert_format_tf_to_wandb(box_list, classes_list):
+def convert_format_keras_to_wandb(box_list, classes_list):
     """
-    Function to convert a box_list output by 
-    
+    Function to convert a bbox and class information from the KerasCV format to
+    the WandB format.
+
+    Parameters:
+    box_list (list): Information regarding bounding box coordinates in the KerasCV format.
+    classes_list (list): Information regarding the class detected.
+
+    Returns:
+    Python list with each entry containing a dictionary of a bounding box data in the
+    format desired by WandB.
     """
     all_boxes = []
     for b_i, box in enumerate(box_list):
