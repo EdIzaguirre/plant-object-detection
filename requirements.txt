@@ -1,8 +1,9 @@
 metaflow==2.12
 kaggle==1.6.3
 python-dotenv==1.0.1
-tensorflow==2.16.1
+tensorflow==2.15.1
 keras_cv==0.9.0
 matplotlib==3.9.0
 opencv-python==4.9.0.80
 pycocotools==2.0.7
+boto3==1.34.128
