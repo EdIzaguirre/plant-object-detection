@@ -1,4 +1,4 @@
-from metaflow import FlowSpec, step, current, batch, S3, conda, conda_base, environment, retry, pypi
+from metaflow import FlowSpec, step, current, batch, S3, environment
 from custom_decorators import pip
 import os
 import time
@@ -44,7 +44,7 @@ class main_flow(FlowSpec):
     @step
     def train_model(self):
         import tensorflow as tf
-        from utils import parse_tfrecord_fn, dict_to_tuple, create_model, evaluate_model_wandb
+        from utils import parse_tfrecord_fn, dict_to_tuple, create_model
         import keras
         import keras_cv
         import wandb
@@ -57,29 +57,32 @@ class main_flow(FlowSpec):
 
         print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
+        self.config = {
+            "base_lr": 0.0001,
+            "loss": "sparse_categorical_crossentropy",
+            "epoch": 1,
+            "batch_size": 16,
+            "classification_loss": "focal",
+            "box_loss": "smoothl1",
+            "num_examples": 4,
+            "bbox_format": "xyxy",
+            "img_size": 416,
+            "testing": True,
+            "aws_batch": True,
+        }
+
         # Start a run, tracking hyperparameters
-        wandb.init(
+        run = wandb.init(
             project=os.getenv('WANDB_PROJECT'),
             entity=os.getenv('WANDB_ENTITY'),
-            config={
-                "base_lr": 0.0001,
-                "loss": "sparse_categorical_crossentropy",
-                "epoch": 1,
-                "batch_size": 16,
-                "classification_loss": "focal",
-                "box_loss": "smoothl1",
-                "num_examples": 4,
-                "bbox_format": "xyxy",
-                "img_size": 416,
-                "testing": True,
-                "batch": True
-            }
+            config=self.config
         )
 
         config = wandb.config
+        self.run_id = run.id
 
         # Working with AWS Batch
-        if config.batch:
+        if config.aws_batch:
             file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
 
             with S3() as s3:
@@ -109,11 +112,8 @@ class main_flow(FlowSpec):
         val_dataset = val_dataset.map(parse_tfrecord_fn)
 
         # Batching
-        # Adding autotune for pre-fetching
-        AUTOTUNE = tf.data.experimental.AUTOTUNE
-
-        train_dataset = train_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=AUTOTUNE)
-        val_dataset = val_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=AUTOTUNE)
+        train_dataset = train_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=tf.data.AUTOTUNE)
+        val_dataset = val_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=tf.data.AUTOTUNE)
 
         # Testing with only one batch
         if config.testing:
@@ -199,10 +199,6 @@ class main_flow(FlowSpec):
             'model_weights': model.get_weights()
         }
 
-        evaluate_model_wandb(model=model, config=config, val_file=self.val_tfrecord_file)
-
-        wandb.finish()
-
         model_name = f"detection-model-{config.base_lr}/1"
         local_tar_name = f"model-{config.base_lr}.tar.gz"
 
@@ -234,6 +230,102 @@ class main_flow(FlowSpec):
                 print("Model saved at: {}".format(url))
                 # Save this path for downstream reference
                 self.s3_path = url
+
+        run.finish()
+
+        self.next(self.evaluate_model)
+
+    @step
+    def evaluate_model(self):
+        import wandb
+        import tensorflow as tf
+        from utils import class_mapping, parse_tfrecord_fn, convert_format_keras_to_wandb, create_model
+        from keras_cv import bounding_box
+
+        run = wandb.init(
+            project=os.getenv('WANDB_PROJECT'),
+            entity=os.getenv('WANDB_ENTITY'),
+            config=self.config,
+            id=self.run_id,
+            resume="allow"
+        )
+
+        config = wandb.config
+
+        class_set = wandb.Classes([
+            {'name': name, 'id': id} for id, name in class_mapping.items()
+        ])
+
+        # Setup a WandB Table object to hold our dataset
+        table = wandb.Table(
+            columns=["Ground Truth", "Predictions"]
+        )
+
+        # Resetting val dataset, removing augmentations
+        val_dataset = tf.data.TFRecordDataset([self.val_tfrecord_file])
+        val_dataset = val_dataset.map(parse_tfrecord_fn)
+
+        model = create_model(config=config)
+        model.set_weights(self.model['model_weights'])
+
+        for example in val_dataset.take(config.num_examples):
+            image, bounding_box_dict = example["images"].numpy(), example["bounding_boxes"]
+            boxes, classes = bounding_box_dict['boxes'].numpy(), bounding_box_dict['classes'].numpy()
+
+            all_boxes = convert_format_keras_to_wandb(box_list=boxes, classes_list=classes)
+
+            ground_truth_image = wandb.Image(
+                image,
+                classes=class_set,
+                boxes={
+                    "ground_truth": {
+                        "box_data": all_boxes,
+                        "class_labels": class_mapping,
+                    }
+                }
+            )
+
+            # Get image as a tensor, include a batch dimension
+            image = example["images"]
+            image = tf.expand_dims(image, axis=0)  # Shape: (1, 416, 416, 3)
+
+            # Get predicted bounding boxes on image
+            y_pred = model.predict(image)
+            y_pred = bounding_box.to_ragged(y_pred)
+            boxes = y_pred['boxes']
+            classes = y_pred['classes']
+
+            # Convert the ragged tensor to a list of lists
+            box_list = boxes.to_list()
+            classes_list = classes.to_list()
+
+            # Remove batch dimension
+            box_list = box_list[0]
+            classes_list = classes_list[0]
+
+            if not box_list:
+                print("No bounding boxes predicted for any test image.")
+                predicted_image = wandb.Image(
+                    image
+                )
+            else:
+                all_boxes = convert_format_keras_to_wandb(box_list=box_list, classes_list=classes_list)
+
+                predicted_image = wandb.Image(
+                    image,
+                    classes=class_set,
+                    boxes={
+                        "ground_truth": {
+                            "box_data": all_boxes,
+                            "class_labels": class_mapping,
+                        }
+                    }
+                )
+
+            table.add_data(ground_truth_image, predicted_image)
+
+        wandb.log({"Plant Disease Predictions": table})
+        run.finish()
 
         self.next(self.deploy)
 
@@ -267,7 +359,7 @@ class main_flow(FlowSpec):
         # Get a sample image to test the endpoint
         test_image_dataset = tf.data.TFRecordDataset([self.train_tfrecord_file]).map(parse_tfrecord_fn)
         inference_resizing = keras_cv.layers.Resizing(
-            416, 416, pad_to_aspect_ratio=True, bounding_box_format="xyxy"
+            self.config["img_size"], self.config["img_size"], pad_to_aspect_ratio=True, bounding_box_format=self.config["bbox_format"]
         )
         test_image_dataset = test_image_dataset.map(inference_resizing)
         test_image_dataset = test_image_dataset.map(dict_to_tuple)
@@ -276,9 +368,9 @@ class main_flow(FlowSpec):
         # Add batch dimension
         image = tf.expand_dims(image, axis=0).numpy()
         input = {'instances': image}
+
         # Get prediction
         result = predictor.predict(input)
-
         self.result = result['predictions'][0]
 
         # Pull boxes and classes from dict
@@ -291,15 +383,15 @@ class main_flow(FlowSpec):
             "classes": self.classes_tensor
         }
 
+        # Converting from dense to ragged tensors
         self.y_pred = bounding_box.to_ragged(self.tensor_dict)
-
         self.boxes, self.classes = self.y_pred['boxes'], self.y_pred['classes']
 
         # Convert the ragged tensor to a list of lists
         self.box_list, self.classes_list = self.boxes.numpy().tolist(), self.classes.numpy().tolist()
 
         if not self.box_list:
-            print("No bounding boxes predicted")
+            print("\n No bounding boxes predicted by Sagemaker endpoint.")
         else:
             # Remove batch dimension
             self.box_list, self.classes_list = self.box_list[0], self.classes_list[0]
@@ -315,7 +407,7 @@ class main_flow(FlowSpec):
     @step
     def end(self):
         """
-        Final step
+        The final step!
         """
 
         print("All done. \n\n Congratulations! Plants around the world will thank you. \n")
