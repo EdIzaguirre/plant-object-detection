@@ -15,9 +15,9 @@ def pip(libraries):
                 for library, version in libraries.items():
                     print("Pip Install:", library, version)
                     if version != "":
-                        subprocess.run([sys.executable, "-m", "pip", "install", library + "==" + version])
+                        subprocess.run([sys.executable, "-m", "pip", "install", "-q", library + "==" + version])
                     else:
-                        subprocess.run([sys.executable, "-m", "pip", "install", library])
+                        subprocess.run([sys.executable, "-m", "pip", "install", "-q", library])
 
             return function(*args, **kwargs)
 

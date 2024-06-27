@@ -1,6 +1,7 @@
 import tensorflow as tf
 import keras_cv
 from keras_cv import bounding_box, visualization
+import wandb
 
 
 def parse_tfrecord_fn(example):
@@ -205,6 +206,83 @@ def convert_format_keras_to_wandb(box_list, classes_list):
         all_boxes.append(box_data)
 
     return all_boxes
+
+
+def evaluate_model_wandb(model, config, val_file):
+    class_set = wandb.Classes([
+        {'name': name, 'id': id} for id, name in class_mapping.items()
+    ])
+
+    # Setup a WandB Table object to hold our dataset
+    table = wandb.Table(
+        columns=["Ground Truth", "Predictions"]
+    )
+
+    # Resetting val dataset, removing augmentations
+    val_dataset = tf.data.TFRecordDataset([val_file])
+    val_dataset = val_dataset.map(parse_tfrecord_fn)
+
+    for example in val_dataset.take(config.num_examples):
+        image, bounding_box_dict = example["images"].numpy(), example["bounding_boxes"]
+        boxes, classes = bounding_box_dict['boxes'].numpy(), bounding_box_dict['classes'].numpy()
+
+        all_boxes = convert_format_keras_to_wandb(box_list=boxes, classes_list=classes)
+
+        ground_truth_image = wandb.Image(
+            image,
+            classes=class_set,
+            boxes={
+                "ground_truth": {
+                    "box_data": all_boxes,
+                    "class_labels": class_mapping,
+                }
+            }
+        )
+
+        # Get image as a tensor, include a batch dimension
+        image = example["images"]
+        image = tf.expand_dims(image, axis=0)  # Shape: (1, 416, 416, 3)
+
+        # Get predicted bounding boxes on image
+        y_pred = model.predict(image)
+        y_pred = bounding_box.to_ragged(y_pred)
+
+        boxes = y_pred['boxes']
+        classes = y_pred['classes']
+
+        # Convert the ragged tensor to a list of lists
+        box_list = boxes.to_list()
+        classes_list = classes.to_list()
+
+        # Remove batch dimension
+        box_list = box_list[0]
+        classes_list = classes_list[0]
+
+        # print(f"boxes: {box_list}")
+        # print(f"classes: {classes_list}")
+
+        if not box_list:
+            print("No bounding boxes predicted")
+            predicted_image = wandb.Image(
+                image
+            )
+        else:
+            all_boxes = convert_format_keras_to_wandb(box_list=box_list, classes_list=classes_list)
+
+            predicted_image = wandb.Image(
+                image,
+                classes=class_set,
+                boxes={
+                    "ground_truth": {
+                        "box_data": all_boxes,
+                        "class_labels": class_mapping,
+                    }
+                }
+            )
+
+        table.add_data(ground_truth_image, predicted_image)
+
+    wandb.log({"Plant Disease Predictions": table})
 
 
 class_mapping = {
