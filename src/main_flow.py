@@ -1,6 +1,7 @@
 from metaflow import FlowSpec, step, current, batch, S3, conda, conda_base, environment, retry, pypi
 from custom_decorators import pip
 import os
+import time
 
 # Loading environment variables
 try:
@@ -32,68 +33,29 @@ class main_flow(FlowSpec):
 
         self.next(self.train_model)
 
-    # @pip(libraries={'tensorflow': '2.15.1', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.1'})
+    @pip(libraries={'tensorflow': '2.15', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.3'})
     # @batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow")
-    # # @batch(memory=15360, queue="job-queue-metaflow")
-    # @environment(vars={
-    #     "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
-    #     'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
-    #     'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
-    #     'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
+    @batch(memory=15360, queue="job-queue-metaflow")
+    @environment(vars={
+        "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
+        'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
+        'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
+        'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
     @step
     def train_model(self):
         import tensorflow as tf
-        from utils import parse_tfrecord_fn, dict_to_tuple, class_mapping, create_model, convert_format_keras_to_wandb
+        from utils import parse_tfrecord_fn, dict_to_tuple, create_model, evaluate_model_wandb
         import keras
         import keras_cv
-        from keras_cv import bounding_box
         import wandb
         from wandb.integration.keras import WandbMetricsLogger, WandbModelCheckpoint
+        import tarfile
 
         assert os.getenv('WANDB_API_KEY')
         assert os.getenv('WANDB_ENTITY')
         assert os.getenv('WANDB_PROJECT')
 
         print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
-
-        # Uncomment if working with AWS Batch
-        # file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
-
-        # with S3() as s3:
-        #     train_dataset_blob = s3.get(file_path + 'leaves.tfrecord').blob
-        #     val_dataset_blob = s3.get(file_path + 'test_leaves.tfrecord').blob
-
-        # # Write the blobs to local files for TensorFlow to read
-        # train_tfrecord_file = 'train_leaves.tfrecord'
-        # val_tfrecord_file = 'val_test_leaves.tfrecord'
-
-        # with open(train_tfrecord_file, 'wb') as f:
-        #     f.write(train_dataset_blob)
-
-        # with open(val_tfrecord_file, 'wb') as f:
-        #     f.write(val_dataset_blob)
-
-        # Uncomment if working locally
-        train_tfrecord_file = '../data_raw/leaves.tfrecord'
-        val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
-
-        # Create a TFRecordDataset
-        train_dataset = tf.data.TFRecordDataset([train_tfrecord_file])
-        val_dataset = tf.data.TFRecordDataset([val_tfrecord_file])
-
-        # Iterate over a few entries and print their content. Uncomment this to look at the raw data
-        # for record in train_dataset.take(1):
-        #     example = tf.train.Example()
-        #     example.ParseFromString(record.numpy())
-        #     print(example)
-
-        train_dataset = train_dataset.map(parse_tfrecord_fn)
-        val_dataset = val_dataset.map(parse_tfrecord_fn)
-
-        # Batching
-        # Adding autotune for pre-fetching
-        AUTOTUNE = tf.data.experimental.AUTOTUNE
-        IMG_SIZE = 416
 
         # Start a run, tracking hyperparameters
         wandb.init(
@@ -102,23 +64,59 @@ class main_flow(FlowSpec):
             config={
                 "base_lr": 0.0001,
                 "loss": "sparse_categorical_crossentropy",
-                "epoch": 5,
+                "epoch": 1,
                 "batch_size": 16,
                 "classification_loss": "focal",
                 "box_loss": "smoothl1",
                 "num_examples": 4,
                 "bbox_format": "xyxy",
-                "testing": False
+                "img_size": 416,
+                "testing": True,
+                "batch": True
             }
         )
 
         config = wandb.config
 
+        # Working with AWS Batch
+        if config.batch:
+            file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
+
+            with S3() as s3:
+                train_dataset_blob = s3.get(file_path + 'leaves.tfrecord').blob
+                val_dataset_blob = s3.get(file_path + 'test_leaves.tfrecord').blob
+
+            # Write the blobs to local files for TensorFlow to read
+            self.train_tfrecord_file = 'train_leaves.tfrecord'
+            self.val_tfrecord_file = 'val_test_leaves.tfrecord'
+
+            with open(self.train_tfrecord_file, 'wb') as f:
+                f.write(train_dataset_blob)
+
+            with open(self.val_tfrecord_file, 'wb') as f:
+                f.write(val_dataset_blob)
+
+        # Working locally
+        else:
+            self.train_tfrecord_file = '../data_raw/leaves.tfrecord'
+            self.val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
+
+        # Create a TFRecordDataset
+        train_dataset = tf.data.TFRecordDataset([self.train_tfrecord_file])
+        val_dataset = tf.data.TFRecordDataset([self.val_tfrecord_file])
+
+        train_dataset = train_dataset.map(parse_tfrecord_fn)
+        val_dataset = val_dataset.map(parse_tfrecord_fn)
+
+        # Batching
+        # Adding autotune for pre-fetching
+        AUTOTUNE = tf.data.experimental.AUTOTUNE
+
         train_dataset = train_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=AUTOTUNE)
         val_dataset = val_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=AUTOTUNE)
 
         # Testing with only one batch
-        if config.testing is True:
+        if config.testing:
             train_dataset = train_dataset.take(1)
             val_dataset = val_dataset.take(1)
 
@@ -127,7 +125,7 @@ class main_flow(FlowSpec):
         augmenter = keras.Sequential(
             [
                 keras_cv.layers.JitteredResize(
-                    target_size=(IMG_SIZE, IMG_SIZE), scale_factor=(0.8, 1.25), bounding_box_format=config.bbox_format
+                    target_size=(config.img_size, config.img_size), scale_factor=(0.8, 1.25), bounding_box_format=config.bbox_format
                 ),
                 keras_cv.layers.RandomFlip(mode="horizontal_and_vertical", bounding_box_format=config.bbox_format),
                 keras_cv.layers.RandomRotation(factor=0.06, bounding_box_format=config.bbox_format),
@@ -138,7 +136,7 @@ class main_flow(FlowSpec):
 
         # Resize and pad images
         inference_resizing = keras_cv.layers.Resizing(
-            IMG_SIZE, IMG_SIZE, pad_to_aspect_ratio=True, bounding_box_format=config.bbox_format
+            config.img_size, config.img_size, pad_to_aspect_ratio=True, bounding_box_format=config.bbox_format
         )
 
         # Augmenting training set/resizing validation set
@@ -151,8 +149,6 @@ class main_flow(FlowSpec):
 
         # Including a global_clipnorm is extremely important in object detection tasks
         checkpoint_path = "best-custom-model.weights.h5"
-
-        model = create_model(config=config)
 
         callbacks_list = [
             # Conducting early stopping to stop after 2 epochs of non-improving validation loss
@@ -191,104 +187,138 @@ class main_flow(FlowSpec):
             validation_data=val_dataset,
             epochs=config.epoch,
             callbacks=callbacks_list,
-            verbose=1,
+            verbose=0,
         )
 
         # Create model with the weights of the best model
-        # model = create_model(config=config)
-        # model.load_weights(checkpoint_path)
-
-        class_set = wandb.Classes([
-            {'name': name, 'id': id} for id, name in class_mapping.items()
-        ])
-
-        # Setup a WandB Table object to hold our dataset
-        table = wandb.Table(
-            columns=["Ground Truth", "Predictions"]
-        )
-
-        # Resetting val dataset, removing augmentations
-        val_dataset = tf.data.TFRecordDataset([val_tfrecord_file])
-        val_dataset = val_dataset.map(parse_tfrecord_fn)
-
-        for example in val_dataset.take(config.num_examples):
-            image, bounding_box_dict = example["images"].numpy(), example["bounding_boxes"]
-            boxes, classes = bounding_box_dict['boxes'].numpy(), bounding_box_dict['classes'].numpy()
-
-            all_boxes = convert_format_keras_to_wandb(box_list=boxes, classes_list=classes)
-
-            ground_truth_image = wandb.Image(
-                image,
-                classes=class_set,
-                boxes={
-                    "ground_truth": {
-                        "box_data": all_boxes,
-                        "class_labels": class_mapping,
-                    }
-                }
-            )
-
-            # Get image as a tensor, include a batch dimension
-            image = example["images"]
-            image = tf.expand_dims(image, axis=0)  # Shape: (1, 416, 416, 3)
-
-            # Get predicted bounding boxes on image
-            y_pred = model.predict(image)
-            y_pred = bounding_box.to_ragged(y_pred)
-
-            boxes = y_pred['boxes']
-            classes = y_pred['classes']
-
-            # Convert the ragged tensor to a list of lists
-            box_list = boxes.to_list()
-            classes_list = classes.to_list()
-
-            # Remove batch dimension
-            box_list = box_list[0]
-            classes_list = classes_list[0]
-
-            # print(f"boxes: {box_list}")
-            # print(f"classes: {classes_list}")
-
-            if not box_list:
-                print("No bounding boxes predicted")
-                predicted_image = wandb.Image(
-                    image
-                )
-            else:
-                all_boxes = convert_format_keras_to_wandb(box_list=box_list, classes_list=classes_list)
-
-                predicted_image = wandb.Image(
-                    image,
-                    classes=class_set,
-                    boxes={
-                        "ground_truth": {
-                            "box_data": all_boxes,
-                            "class_labels": class_mapping,
-                        }
-                    }
-                )
-
-            table.add_data(ground_truth_image, predicted_image)
-
-        wandb.log({"Plant Disease Predictions": table})
-
-        wandb.finish()
+        model = create_model(config=config)
+        model.load_weights(checkpoint_path)
 
         self.model = {
             'model': model.to_json(),
             'model_weights': model.get_weights()
         }
 
+        evaluate_model_wandb(model=model, config=config, val_file=self.val_tfrecord_file)
+
+        wandb.finish()
+
+        model_name = f"detection-model-{config.base_lr}/1"
+        local_tar_name = f"model-{config.base_lr}.tar.gz"
+
+        # Create necessary directories before saving the model
+        os.makedirs(os.path.dirname(model_name), exist_ok=True)
+
+        # Define the custom serving function
+        @tf.function(input_signature=[tf.TensorSpec([None, 416, 416, 3], tf.float32)])
+        def serving_fn(images):
+            # Get raw predictions
+            encoded_predictions = model(images, training=False)
+            # Decode the predictions
+            decoded_predictions = model.decode_predictions(encoded_predictions, images)
+            # Return the processed predictions
+            return {'boxes': decoded_predictions['boxes'], 'classes': decoded_predictions['classes']}
+
+        # Export the model with the custom serving function
+        tf.saved_model.save(model, model_name, signatures={'serving_default': serving_fn})
+
+        # Zip keras folder to a single tar file
+        with tarfile.open(local_tar_name, mode="w:gz") as _tar:
+            _tar.add(model_name, recursive=True)
+        # Metaflow nice s3 client needs a byte object for the put
+        with open(local_tar_name, "rb") as in_file:
+            data = in_file.read()
+            with S3(run=self) as s3:
+                url = s3.put(local_tar_name, data)
+                # Print it out for debug purposes
+                print("Model saved at: {}".format(url))
+                # Save this path for downstream reference
+                self.s3_path = url
+
+        self.next(self.deploy)
+
+    @step
+    def deploy(self):
+        import tensorflow as tf
+        from sagemaker.tensorflow import TensorFlowModel, TensorFlowPredictor
+        from utils import parse_tfrecord_fn, dict_to_tuple
+        import keras_cv
+        from keras_cv import bounding_box
+
+        # generate a signature for the endpoint, using timestamp as a convention
+        ENDPOINT_NAME = f'detection-{int(round(time.time() * 1000))}-endpoint'
+        # print out the name, so that we can use it when deploying our lambda
+        print(f"\n\n================\nEndpoint name is: {ENDPOINT_NAME}\n\n")
+        model = TensorFlowModel(
+            model_data=self.s3_path,
+            framework_version='2.14',
+            role="arn:aws:iam::905418240029:role/service-role/AmazonSageMaker-ExecutionRole-20240416T093215")
+
+        predictor = model.deploy(
+            initial_instance_count=1,
+            instance_type='ml.t2.medium',
+            endpoint_name=ENDPOINT_NAME)
+
+        # Uncomment this if you already have an endpoint up
+        # predictor = TensorFlowPredictor(
+        #     endpoint_name='detection-1719520877675-endpoint',
+        # )
+
+        # Get a sample image to test the endpoint
+        test_image_dataset = tf.data.TFRecordDataset([self.train_tfrecord_file]).map(parse_tfrecord_fn)
+        inference_resizing = keras_cv.layers.Resizing(
+            416, 416, pad_to_aspect_ratio=True, bounding_box_format="xyxy"
+        )
+        test_image_dataset = test_image_dataset.map(inference_resizing)
+        test_image_dataset = test_image_dataset.map(dict_to_tuple)
+        image, _ = next(iter(test_image_dataset.take(1)))
+
+        # Add batch dimension
+        image = tf.expand_dims(image, axis=0).numpy()
+        input = {'instances': image}
+        # Get prediction
+        result = predictor.predict(input)
+
+        self.result = result['predictions'][0]
+
+        # Pull boxes and classes from dict
+        self.boxes, self.classes = self.result['boxes'], self.result['classes']
+
+        # Convert to tensors for processing in to_ragged
+        self.boxes_tensor, self.classes_tensor = tf.convert_to_tensor(self.boxes, dtype=tf.float32), tf.convert_to_tensor(self.classes, dtype=tf.float32)
+        self.tensor_dict = {
+            "boxes": self.boxes_tensor,
+            "classes": self.classes_tensor
+        }
+
+        self.y_pred = bounding_box.to_ragged(self.tensor_dict)
+
+        self.boxes, self.classes = self.y_pred['boxes'], self.y_pred['classes']
+
+        # Convert the ragged tensor to a list of lists
+        self.box_list, self.classes_list = self.boxes.numpy().tolist(), self.classes.numpy().tolist()
+
+        if not self.box_list:
+            print("No bounding boxes predicted")
+        else:
+            # Remove batch dimension
+            self.box_list, self.classes_list = self.box_list[0], self.classes_list[0]
+
+            print(f"boxes type: {type(self.box_list)}")
+            print(f"classes type: {type(self.classes_list)}")
+
+            print(f"boxes: {self.box_list}")
+            print(f"classes: {self.classes_list}")
+
         self.next(self.end)
 
     @step
     def end(self):
         """
-        Just say bye!
+        Final step
         """
 
-        print("All done. \n\n Congratulations!\n")
+        print("All done. \n\n Congratulations! Plants around the world will thank you. \n")
         return
 
 
