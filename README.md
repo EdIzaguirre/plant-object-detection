@@ -14,7 +14,7 @@ It contains 2,569 images across 13 plant species and 30 classes (diseased and he
 for the remixing, transforming, and building upon the images for any purpose, even commercially.
 
 ## Metaflow
-This project uses Metaflow as the orchestration and infrastructure abstraction tool. Below you can see what tools are used for this project.
+This project uses Metaflow as the orchestration and infrastructure abstraction tool. Below you can see what other best-in-class tools are used for this project.
 
 ![Flow used for this project](images/flow_image.png)
 
