@@ -8,6 +8,8 @@ This is a production-grade machine learning application that uses object detecti
 to learn how to create an end-to-end computer vision application using Metaflow as the primary orchestration tool. Inspiration was taken from the notable 
 [You Don't Need a Bigger Boat](https://github.com/jacopotagliabue/you-dont-need-a-bigger-boat) repo, which shows a more complicated flow based on training a recommendation model.
 
+Check out [this article]([url](https://medium.com/towards-data-science/object-detection-using-retinanet-and-kerascv-b07940327b6c)) I wrote in _Towards Data Science_. Explaining some of the basics behind the code in this repo. 
+
 ## Data Source
 The data for this project is from the [PlantDoc dataset](https://public.roboflow.com/object-detection/plantdoc?ref=blog.roboflow.com), published on the Roboflow website. 
 It contains 2,569 images across 13 plant species and 30 classes (diseased and healthy) for image classification and object detection. It is under a CC BY 4.0 license, which allows
