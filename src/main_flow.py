@@ -31,31 +31,15 @@ class main_flow(FlowSpec):
         assert os.environ['WANDB_PROJECT']
         assert os.environ['S3_BUCKET_ADDRESS']
 
-        self.next(self.train_model)
+        self.next(self.augment_data)
 
-    @pip(libraries={'tensorflow': '2.15', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.3'})
-    # @batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow")
-    @batch(memory=15360, queue="job-queue-metaflow")
-    @environment(vars={
-        "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
-        'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
-        'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
-        'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
     @step
-    def train_model(self):
+    def augment_data(self):
+        from utils import parse_tfrecord_fn, dict_to_tuple
         import tensorflow as tf
-        from utils import parse_tfrecord_fn, dict_to_tuple, create_model
         import keras
         import keras_cv
-        import wandb
-        from wandb.integration.keras import WandbMetricsLogger, WandbModelCheckpoint
         import tarfile
-
-        assert os.getenv('WANDB_API_KEY')
-        assert os.getenv('WANDB_ENTITY')
-        assert os.getenv('WANDB_PROJECT')
-
-        print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
         self.config = {
             "base_lr": 0.0001,
@@ -71,18 +55,8 @@ class main_flow(FlowSpec):
             "aws_batch": True,
         }
 
-        # Start a run, tracking hyperparameters
-        run = wandb.init(
-            project=os.getenv('WANDB_PROJECT'),
-            entity=os.getenv('WANDB_ENTITY'),
-            config=self.config
-        )
-
-        config = wandb.config
-        self.run_id = run.id
-
         # Working with AWS Batch
-        if config.aws_batch:
+        if self.config['aws_batch']:
             file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
 
             with S3() as s3:
@@ -112,11 +86,11 @@ class main_flow(FlowSpec):
         val_dataset = val_dataset.map(parse_tfrecord_fn)
 
         # Batching
-        train_dataset = train_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=tf.data.AUTOTUNE)
-        val_dataset = val_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=tf.data.AUTOTUNE)
+        train_dataset = train_dataset.ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
+        val_dataset = val_dataset.ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
 
         # Testing with only one batch
-        if config.testing:
+        if self.config['testing']:
             train_dataset = train_dataset.take(1)
             val_dataset = val_dataset.take(1)
 
@@ -125,10 +99,10 @@ class main_flow(FlowSpec):
         augmenter = keras.Sequential(
             [
                 keras_cv.layers.JitteredResize(
-                    target_size=(config.img_size, config.img_size), scale_factor=(0.8, 1.25), bounding_box_format=config.bbox_format
+                    target_size=(self.config['img_size'], self.config['img_size']), scale_factor=(0.8, 1.25), bounding_box_format=self.config['bbox_format']
                 ),
-                keras_cv.layers.RandomFlip(mode="horizontal_and_vertical", bounding_box_format=config.bbox_format),
-                keras_cv.layers.RandomRotation(factor=0.06, bounding_box_format=config.bbox_format),
+                keras_cv.layers.RandomFlip(mode="horizontal_and_vertical", bounding_box_format=self.config['bbox_format']),
+                keras_cv.layers.RandomRotation(factor=0.06, bounding_box_format=self.config['bbox_format']),
                 keras_cv.layers.RandomSaturation(factor=(0.4, 0.6)),
                 keras_cv.layers.RandomHue(factor=0.2, value_range=[0, 255]),
             ]
@@ -136,7 +110,7 @@ class main_flow(FlowSpec):
 
         # Resize and pad images
         inference_resizing = keras_cv.layers.Resizing(
-            config.img_size, config.img_size, pad_to_aspect_ratio=True, bounding_box_format=config.bbox_format
+            self.config['img_size'], self.config['img_size'], pad_to_aspect_ratio=True, bounding_box_format=self.config['bbox_format']
         )
 
         # Augmenting training set/resizing validation set
@@ -146,6 +120,87 @@ class main_flow(FlowSpec):
         # Converting data into tuples suitable for training
         train_dataset = train_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
+
+        # Save augmented dataset to TFRecord
+        augmented_train_dir, augmented_val_dir = 'augmented_train', 'augmented_val'
+        tf.data.Dataset.save(train_dataset, augmented_train_dir)
+        tf.data.Dataset.save(val_dataset, augmented_val_dir)
+
+        # Upload augmented dataset to S3
+        augmented_train_archive, augmented_val_archive = f"{augmented_train_dir}.tar.gz", f"{augmented_val_dir}.tar.gz"
+
+        with tarfile.open(augmented_train_archive, mode="w:gz") as tar:
+            tar.add(augmented_train_dir, recursive=True)
+        with tarfile.open(augmented_val_archive, mode="w:gz") as tar:
+            tar.add(augmented_val_dir, recursive=True)
+
+        with open(augmented_train_archive, "rb") as f:
+            data = f.read()
+            with S3(run=self) as s3:
+                url = s3.put(augmented_train_archive, data)
+                self.augmented_train_url = url
+        with open(augmented_val_archive, "rb") as f:
+            data = f.read()
+            with S3(run=self) as s3:
+                url = s3.put(augmented_val_archive, data)
+                self.augmented_val_url = url
+
+        self.next(self.train_model)
+
+    @pip(libraries={'tensorflow': '2.15', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.3'})
+    # @batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow")
+    @batch(memory=15360, queue="job-queue-metaflow")
+    @environment(vars={
+        "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
+        'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
+        'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
+        'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
+    @step
+    def train_model(self):
+        import tensorflow as tf
+        from utils import create_model
+        import keras
+        import wandb
+        from wandb.integration.keras import WandbMetricsLogger, WandbModelCheckpoint
+        import tarfile
+
+        print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+
+        # Download augmented dataset from S3
+        with S3() as s3:
+            augmented_train_blob = s3.get(self.augmented_train_url).blob
+            augmented_val_blob = s3.get(self.augmented_val_url).blob
+
+        augmented_train_archive, augmented_val_archive = 'augmented_train.tar.gz', 'augmented_val.tar.gz'
+
+        with open(augmented_train_archive, 'wb') as f:
+            f.write(augmented_train_blob)
+        with open(augmented_val_archive, 'wb') as f:
+            f.write(augmented_val_blob)
+
+        with tarfile.open(augmented_train_archive, mode="r:gz") as tar:
+            tar.extractall()
+        with tarfile.open(augmented_val_archive, mode="r:gz") as tar:
+            tar.extractall()
+
+        # Load augmented datasets
+        augmented_train_dir = 'augmented_train'
+        train_dataset = tf.data.Dataset.load(augmented_train_dir)
+        augmented_val_dir = 'augmented_val'
+        val_dataset = tf.data.Dataset.load(augmented_val_dir)
+
+        train_dataset = train_dataset.batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
+        val_dataset = val_dataset.batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
+
+        # Start a run, tracking hyperparameters
+        run = wandb.init(
+            project=os.getenv('WANDB_PROJECT'),
+            entity=os.getenv('WANDB_ENTITY'),
+            config=self.config
+        )
+
+        config = wandb.config
+        self.run_id = run.id
 
         # Including a global_clipnorm is extremely important in object detection tasks
         checkpoint_path = "best-custom-model.weights.h5"
