@@ -20,5 +20,11 @@ src/wandb/
 src/__pycache__
 src/metaflow.s3.*/
 
+src/augmented_train.tar.gz
+src/augmented_val.tar.gz
+
+src/augmented_train
+src/augmented_val
+
 .DS_Store
 **/.DS_Store
