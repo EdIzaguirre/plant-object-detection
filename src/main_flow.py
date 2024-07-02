@@ -2,6 +2,7 @@ from metaflow import FlowSpec, step, current, batch, S3, environment
 from custom_decorators import pip
 import os
 import time
+import shutil
 
 # Loading environment variables
 try:
@@ -89,6 +90,28 @@ class main_flow(FlowSpec):
         train_dataset = train_dataset.ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
         val_dataset = val_dataset.ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
 
+        # def download_from_s3(s3_path, local_path):
+        #     with S3() as s3:
+        #         s3_blob = s3.get(s3_path).blob
+        #     with open(local_path, 'wb') as f:
+        #         f.write(s3_blob)
+
+        # if self.config['aws_batch']:
+        #     s3_base_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
+        #     self.train_tfrecord_file = 'train_leaves.tfrecord'
+        #     self.val_tfrecord_file = 'val_test_leaves.tfrecord'
+        #     download_from_s3(s3_base_path + 'leaves.tfrecord', self.train_tfrecord_file)
+        #     download_from_s3(s3_base_path + 'test_leaves.tfrecord', self.val_tfrecord_file)
+        # else:
+        #     self.train_tfrecord_file = '../data_raw/leaves.tfrecord'
+        #     self.val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
+
+        # def create_dataset(tfrecord_file):
+        #     return tf.data.TFRecordDataset([tfrecord_file]).map(parse_tfrecord_fn).ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
+
+        # train_dataset = create_dataset(self.train_tfrecord_file)
+        # val_dataset = create_dataset(self.val_tfrecord_file)
+
         # Testing with only one batch
         if self.config['testing']:
             train_dataset = train_dataset.take(1)
@@ -113,16 +136,27 @@ class main_flow(FlowSpec):
             self.config['img_size'], self.config['img_size'], pad_to_aspect_ratio=True, bounding_box_format=self.config['bbox_format']
         )
 
+        print("Augmenting")
+
         # Augmenting training set/resizing validation set
         train_dataset = train_dataset.map(augmenter, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(inference_resizing, num_parallel_calls=tf.data.AUTOTUNE)
 
+        print("dict to tuple")
         # Converting data into tuples suitable for training
         train_dataset = train_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
 
+        print("Saving to TF Record")
         # Save augmented dataset to TFRecord
         augmented_train_dir, augmented_val_dir = 'augmented_train', 'augmented_val'
+
+        # Clear the directories before saving new data
+        if os.path.exists(augmented_train_dir):
+            shutil.rmtree(augmented_train_dir)
+        if os.path.exists(augmented_val_dir):
+            shutil.rmtree(augmented_val_dir)
+
         tf.data.Dataset.save(train_dataset, augmented_train_dir)
         tf.data.Dataset.save(val_dataset, augmented_val_dir)
 
@@ -134,6 +168,7 @@ class main_flow(FlowSpec):
         with tarfile.open(augmented_val_archive, mode="w:gz") as tar:
             tar.add(augmented_val_dir, recursive=True)
 
+        print("Moving to S3")
         with open(augmented_train_archive, "rb") as f:
             data = f.read()
             with S3(run=self) as s3:
@@ -189,8 +224,7 @@ class main_flow(FlowSpec):
         augmented_val_dir = 'augmented_val'
         val_dataset = tf.data.Dataset.load(augmented_val_dir)
 
-        train_dataset = train_dataset.batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
-        val_dataset = val_dataset.batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
+        self.sample_train = next(iter(train_dataset.take(1)))
 
         # Start a run, tracking hyperparameters
         run = wandb.init(
