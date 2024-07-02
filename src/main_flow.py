@@ -45,7 +45,7 @@ class main_flow(FlowSpec):
         self.config = {
             "base_lr": 0.0001,
             "loss": "sparse_categorical_crossentropy",
-            "epoch": 1,
+            "epoch": 2,
             "batch_size": 16,
             "classification_loss": "focal",
             "box_loss": "smoothl1",
