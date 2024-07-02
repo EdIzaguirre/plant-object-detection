@@ -158,6 +158,10 @@ class main_flow(FlowSpec):
 
         print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
+        # Load augmented datasets
+        augmented_train_dir = 'augmented_train'
+        augmented_val_dir = 'augmented_val'
+
         # Download augmented dataset from S3
         with S3() as s3:
             augmented_train_blob = s3.get(self.augmented_train_url).blob
@@ -175,13 +179,8 @@ class main_flow(FlowSpec):
         with tarfile.open(augmented_val_archive, mode="r:gz") as tar:
             tar.extractall()
 
-        # Load augmented datasets
-        augmented_train_dir = 'augmented_train'
         train_dataset = tf.data.Dataset.load(augmented_train_dir)
-        augmented_val_dir = 'augmented_val'
         val_dataset = tf.data.Dataset.load(augmented_val_dir)
-
-        self.sample_train = next(iter(train_dataset.take(1)))
 
         # Start a run, tracking hyperparameters
         run = wandb.init(
