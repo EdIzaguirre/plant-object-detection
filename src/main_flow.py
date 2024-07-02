@@ -56,61 +56,27 @@ class main_flow(FlowSpec):
             "aws_batch": True,
         }
 
-        # Working with AWS Batch
-        if self.config['aws_batch']:
-            file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
-
+        def download_from_s3(s3_path, local_path):
             with S3() as s3:
-                train_dataset_blob = s3.get(file_path + 'leaves.tfrecord').blob
-                val_dataset_blob = s3.get(file_path + 'test_leaves.tfrecord').blob
+                s3_blob = s3.get(s3_path).blob
+            with open(local_path, 'wb') as f:
+                f.write(s3_blob)
 
-            # Write the blobs to local files for TensorFlow to read
+        if self.config['aws_batch']:
+            s3_base_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
             self.train_tfrecord_file = 'train_leaves.tfrecord'
             self.val_tfrecord_file = 'val_test_leaves.tfrecord'
-
-            with open(self.train_tfrecord_file, 'wb') as f:
-                f.write(train_dataset_blob)
-
-            with open(self.val_tfrecord_file, 'wb') as f:
-                f.write(val_dataset_blob)
-
-        # Working locally
+            download_from_s3(s3_base_path + 'leaves.tfrecord', self.train_tfrecord_file)
+            download_from_s3(s3_base_path + 'test_leaves.tfrecord', self.val_tfrecord_file)
         else:
             self.train_tfrecord_file = '../data_raw/leaves.tfrecord'
             self.val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
 
-        # Create a TFRecordDataset
-        train_dataset = tf.data.TFRecordDataset([self.train_tfrecord_file])
-        val_dataset = tf.data.TFRecordDataset([self.val_tfrecord_file])
+        def create_dataset(tfrecord_file):
+            return tf.data.TFRecordDataset([tfrecord_file]).map(parse_tfrecord_fn).ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
 
-        train_dataset = train_dataset.map(parse_tfrecord_fn)
-        val_dataset = val_dataset.map(parse_tfrecord_fn)
-
-        # Batching
-        train_dataset = train_dataset.ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
-        val_dataset = val_dataset.ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
-
-        # def download_from_s3(s3_path, local_path):
-        #     with S3() as s3:
-        #         s3_blob = s3.get(s3_path).blob
-        #     with open(local_path, 'wb') as f:
-        #         f.write(s3_blob)
-
-        # if self.config['aws_batch']:
-        #     s3_base_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
-        #     self.train_tfrecord_file = 'train_leaves.tfrecord'
-        #     self.val_tfrecord_file = 'val_test_leaves.tfrecord'
-        #     download_from_s3(s3_base_path + 'leaves.tfrecord', self.train_tfrecord_file)
-        #     download_from_s3(s3_base_path + 'test_leaves.tfrecord', self.val_tfrecord_file)
-        # else:
-        #     self.train_tfrecord_file = '../data_raw/leaves.tfrecord'
-        #     self.val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
-
-        # def create_dataset(tfrecord_file):
-        #     return tf.data.TFRecordDataset([tfrecord_file]).map(parse_tfrecord_fn).ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
-
-        # train_dataset = create_dataset(self.train_tfrecord_file)
-        # val_dataset = create_dataset(self.val_tfrecord_file)
+        train_dataset = create_dataset(self.train_tfrecord_file)
+        val_dataset = create_dataset(self.val_tfrecord_file)
 
         # Testing with only one batch
         if self.config['testing']:
@@ -160,25 +126,16 @@ class main_flow(FlowSpec):
         tf.data.Dataset.save(train_dataset, augmented_train_dir)
         tf.data.Dataset.save(val_dataset, augmented_val_dir)
 
-        # Upload augmented dataset to S3
-        augmented_train_archive, augmented_val_archive = f"{augmented_train_dir}.tar.gz", f"{augmented_val_dir}.tar.gz"
+        def upload_to_s3(local_path, s3_path):
+            with tarfile.open(f"{local_path}.tar.gz", mode="w:gz") as tar:
+                tar.add(local_path, recursive=True)
+            with open(f"{local_path}.tar.gz", "rb") as f:
+                data = f.read()
+                with S3(run=self) as s3:
+                    return s3.put(f"{local_path}.tar.gz", data)
 
-        with tarfile.open(augmented_train_archive, mode="w:gz") as tar:
-            tar.add(augmented_train_dir, recursive=True)
-        with tarfile.open(augmented_val_archive, mode="w:gz") as tar:
-            tar.add(augmented_val_dir, recursive=True)
-
-        print("Moving to S3")
-        with open(augmented_train_archive, "rb") as f:
-            data = f.read()
-            with S3(run=self) as s3:
-                url = s3.put(augmented_train_archive, data)
-                self.augmented_train_url = url
-        with open(augmented_val_archive, "rb") as f:
-            data = f.read()
-            with S3(run=self) as s3:
-                url = s3.put(augmented_val_archive, data)
-                self.augmented_val_url = url
+        self.augmented_train_url = upload_to_s3(augmented_train_dir, f"{augmented_train_dir}.tar.gz")
+        self.augmented_val_url = upload_to_s3(augmented_val_dir, f"{augmented_val_dir}.tar.gz")
 
         self.next(self.train_model)
 
