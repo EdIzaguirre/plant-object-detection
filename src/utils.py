@@ -130,7 +130,7 @@ def dict_to_tuple(inputs):
     inputs (tf.data.Dataset): Contains batched data of images and bounding boxes
 
     Returns:
-    Tuple of images and associated bounding boxes
+    Tuple of images and associated bounding boxes, both tf.data.Datasets
     """
 
     return inputs["images"], bounding_box.to_dense(

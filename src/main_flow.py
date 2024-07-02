@@ -2,6 +2,7 @@ from metaflow import FlowSpec, step, current, batch, S3, environment
 from custom_decorators import pip
 import os
 import time
+import shutil
 
 # Loading environment variables
 try:
@@ -31,6 +32,108 @@ class main_flow(FlowSpec):
         assert os.environ['WANDB_PROJECT']
         assert os.environ['S3_BUCKET_ADDRESS']
 
+        self.next(self.augment_data)
+
+    @step
+    def augment_data(self):
+        from utils import parse_tfrecord_fn, dict_to_tuple
+        import tensorflow as tf
+        import keras
+        import keras_cv
+        import tarfile
+
+        print('Augmenting data')
+
+        self.config = {
+            "base_lr": 0.0001,
+            "loss": "sparse_categorical_crossentropy",
+            "epoch": 2,
+            "batch_size": 16,
+            "classification_loss": "focal",
+            "box_loss": "smoothl1",
+            "num_examples": 4,
+            "bbox_format": "xyxy",
+            "img_size": 416,
+            "testing": True,
+            "aws_batch": True,
+        }
+
+        def download_from_s3(s3_path, local_path):
+            with S3() as s3:
+                s3_blob = s3.get(s3_path).blob
+            with open(local_path, 'wb') as f:
+                f.write(s3_blob)
+
+        if self.config['aws_batch']:
+            s3_base_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
+            self.train_tfrecord_file = 'train_leaves.tfrecord'
+            self.val_tfrecord_file = 'val_test_leaves.tfrecord'
+            download_from_s3(s3_base_path + 'leaves.tfrecord', self.train_tfrecord_file)
+            download_from_s3(s3_base_path + 'test_leaves.tfrecord', self.val_tfrecord_file)
+        else:
+            self.train_tfrecord_file = '../data_raw/leaves.tfrecord'
+            self.val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
+
+        def create_dataset(tfrecord_file):
+            return tf.data.TFRecordDataset([tfrecord_file]).map(parse_tfrecord_fn).ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
+
+        train_dataset = create_dataset(self.train_tfrecord_file)
+        val_dataset = create_dataset(self.val_tfrecord_file)
+
+        # Testing with only one batch
+        if self.config['testing']:
+            train_dataset = train_dataset.take(1)
+            val_dataset = val_dataset.take(1)
+
+        # Defining augmentations
+        augmenter = keras.Sequential(
+            [
+                keras_cv.layers.JitteredResize(
+                    target_size=(self.config['img_size'], self.config['img_size']), scale_factor=(0.8, 1.25), bounding_box_format=self.config['bbox_format']
+                ),
+                keras_cv.layers.RandomFlip(mode="horizontal_and_vertical", bounding_box_format=self.config['bbox_format']),
+                keras_cv.layers.RandomRotation(factor=0.06, bounding_box_format=self.config['bbox_format']),
+                keras_cv.layers.RandomSaturation(factor=(0.4, 0.6)),
+                keras_cv.layers.RandomHue(factor=0.2, value_range=[0, 255]),
+            ]
+        )
+
+        # Resize and pad images
+        inference_resizing = keras_cv.layers.Resizing(
+            self.config['img_size'], self.config['img_size'], pad_to_aspect_ratio=True, bounding_box_format=self.config['bbox_format']
+        )
+
+        # Augmenting training set/resizing validation set
+        train_dataset = train_dataset.map(augmenter, num_parallel_calls=tf.data.AUTOTUNE)
+        val_dataset = val_dataset.map(inference_resizing, num_parallel_calls=tf.data.AUTOTUNE)
+
+        # Converting data into tuples suitable for training
+        train_dataset = train_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
+        val_dataset = val_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
+
+        # Save augmented dataset to TFRecord
+        augmented_train_dir, augmented_val_dir = 'augmented_train', 'augmented_val'
+
+        # Clear the directories before saving new data
+        if os.path.exists(augmented_train_dir):
+            shutil.rmtree(augmented_train_dir)
+        if os.path.exists(augmented_val_dir):
+            shutil.rmtree(augmented_val_dir)
+
+        tf.data.Dataset.save(train_dataset, augmented_train_dir)
+        tf.data.Dataset.save(val_dataset, augmented_val_dir)
+
+        def upload_to_s3(local_path, s3_path):
+            with tarfile.open(f"{local_path}.tar.gz", mode="w:gz") as tar:
+                tar.add(local_path, recursive=True)
+            with open(f"{local_path}.tar.gz", "rb") as f:
+                data = f.read()
+                with S3(run=self) as s3:
+                    return s3.put(f"{local_path}.tar.gz", data)
+
+        self.augmented_train_url = upload_to_s3(augmented_train_dir, f"{augmented_train_dir}.tar.gz")
+        self.augmented_val_url = upload_to_s3(augmented_val_dir, f"{augmented_val_dir}.tar.gz")
+
         self.next(self.train_model)
 
     @pip(libraries={'tensorflow': '2.15', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.3'})
@@ -44,32 +147,37 @@ class main_flow(FlowSpec):
     @step
     def train_model(self):
         import tensorflow as tf
-        from utils import parse_tfrecord_fn, dict_to_tuple, create_model
+        from utils import create_model
         import keras
-        import keras_cv
         import wandb
         from wandb.integration.keras import WandbMetricsLogger, WandbModelCheckpoint
         import tarfile
 
-        assert os.getenv('WANDB_API_KEY')
-        assert os.getenv('WANDB_ENTITY')
-        assert os.getenv('WANDB_PROJECT')
-
         print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
-        self.config = {
-            "base_lr": 0.0001,
-            "loss": "sparse_categorical_crossentropy",
-            "epoch": 1,
-            "batch_size": 16,
-            "classification_loss": "focal",
-            "box_loss": "smoothl1",
-            "num_examples": 4,
-            "bbox_format": "xyxy",
-            "img_size": 416,
-            "testing": True,
-            "aws_batch": True,
-        }
+        # Load augmented datasets
+        augmented_train_dir = 'augmented_train'
+        augmented_val_dir = 'augmented_val'
+
+        # Download augmented dataset from S3
+        with S3() as s3:
+            augmented_train_blob = s3.get(self.augmented_train_url).blob
+            augmented_val_blob = s3.get(self.augmented_val_url).blob
+
+        augmented_train_archive, augmented_val_archive = 'augmented_train.tar.gz', 'augmented_val.tar.gz'
+
+        with open(augmented_train_archive, 'wb') as f:
+            f.write(augmented_train_blob)
+        with open(augmented_val_archive, 'wb') as f:
+            f.write(augmented_val_blob)
+
+        with tarfile.open(augmented_train_archive, mode="r:gz") as tar:
+            tar.extractall()
+        with tarfile.open(augmented_val_archive, mode="r:gz") as tar:
+            tar.extractall()
+
+        train_dataset = tf.data.Dataset.load(augmented_train_dir)
+        val_dataset = tf.data.Dataset.load(augmented_val_dir)
 
         # Start a run, tracking hyperparameters
         run = wandb.init(
@@ -80,72 +188,6 @@ class main_flow(FlowSpec):
 
         config = wandb.config
         self.run_id = run.id
-
-        # Working with AWS Batch
-        if config.aws_batch:
-            file_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
-
-            with S3() as s3:
-                train_dataset_blob = s3.get(file_path + 'leaves.tfrecord').blob
-                val_dataset_blob = s3.get(file_path + 'test_leaves.tfrecord').blob
-
-            # Write the blobs to local files for TensorFlow to read
-            self.train_tfrecord_file = 'train_leaves.tfrecord'
-            self.val_tfrecord_file = 'val_test_leaves.tfrecord'
-
-            with open(self.train_tfrecord_file, 'wb') as f:
-                f.write(train_dataset_blob)
-
-            with open(self.val_tfrecord_file, 'wb') as f:
-                f.write(val_dataset_blob)
-
-        # Working locally
-        else:
-            self.train_tfrecord_file = '../data_raw/leaves.tfrecord'
-            self.val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
-
-        # Create a TFRecordDataset
-        train_dataset = tf.data.TFRecordDataset([self.train_tfrecord_file])
-        val_dataset = tf.data.TFRecordDataset([self.val_tfrecord_file])
-
-        train_dataset = train_dataset.map(parse_tfrecord_fn)
-        val_dataset = val_dataset.map(parse_tfrecord_fn)
-
-        # Batching
-        train_dataset = train_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=tf.data.AUTOTUNE)
-        val_dataset = val_dataset.ragged_batch(config.batch_size).prefetch(buffer_size=tf.data.AUTOTUNE)
-
-        # Testing with only one batch
-        if config.testing:
-            train_dataset = train_dataset.take(1)
-            val_dataset = val_dataset.take(1)
-
-        print('Augmenting data')
-        # Defining augmentations
-        augmenter = keras.Sequential(
-            [
-                keras_cv.layers.JitteredResize(
-                    target_size=(config.img_size, config.img_size), scale_factor=(0.8, 1.25), bounding_box_format=config.bbox_format
-                ),
-                keras_cv.layers.RandomFlip(mode="horizontal_and_vertical", bounding_box_format=config.bbox_format),
-                keras_cv.layers.RandomRotation(factor=0.06, bounding_box_format=config.bbox_format),
-                keras_cv.layers.RandomSaturation(factor=(0.4, 0.6)),
-                keras_cv.layers.RandomHue(factor=0.2, value_range=[0, 255]),
-            ]
-        )
-
-        # Resize and pad images
-        inference_resizing = keras_cv.layers.Resizing(
-            config.img_size, config.img_size, pad_to_aspect_ratio=True, bounding_box_format=config.bbox_format
-        )
-
-        # Augmenting training set/resizing validation set
-        train_dataset = train_dataset.map(augmenter, num_parallel_calls=tf.data.AUTOTUNE)
-        val_dataset = val_dataset.map(inference_resizing, num_parallel_calls=tf.data.AUTOTUNE)
-
-        # Converting data into tuples suitable for training
-        train_dataset = train_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
-        val_dataset = val_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
 
         # Including a global_clipnorm is extremely important in object detection tasks
         checkpoint_path = "best-custom-model.weights.h5"
@@ -242,6 +284,8 @@ class main_flow(FlowSpec):
         from utils import class_mapping, parse_tfrecord_fn, convert_format_keras_to_wandb, create_model
         from keras_cv import bounding_box
 
+        print('Evaluating model')
+
         run = wandb.init(
             project=os.getenv('WANDB_PROJECT'),
             entity=os.getenv('WANDB_ENTITY'),
@@ -337,6 +381,7 @@ class main_flow(FlowSpec):
         import keras_cv
         from keras_cv import bounding_box
 
+        print('Deploying model')
         # generate a signature for the endpoint, using timestamp as a convention
         ENDPOINT_NAME = f'detection-{int(round(time.time() * 1000))}-endpoint'
         # print out the name, so that we can use it when deploying our lambda
