@@ -76,7 +76,7 @@ This will change directories out of the `mf_configure/` folder and programatical
 
 There should be a success message if the data has been successfully uploaded.
 
-### 5) Run the flow!
+### 6) Configure your flow
 At this point you should decide if you want to run the training step of the flow locally, on a provisioned CPU in AWS, or a provisioned GPU in AWS. This will involve commenting out decorators. The following decorators are located above the `train_model` step:
 
 ```
@@ -97,6 +97,7 @@ In addition, you should set the arn of your the Sagemaker role as a Metaflow par
 
 You should also consider running a test of the flow with only one batch, to make sure that the flow is working. To do this, modify the test parameter: 
 
+### 6) Run the flow!
 Now change directories into the `src/` folder. And run the flow.
 
 ```
