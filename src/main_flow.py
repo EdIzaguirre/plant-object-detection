@@ -42,6 +42,8 @@ class main_flow(FlowSpec):
         import keras_cv
         import tarfile
 
+        print('Augmenting data')
+
         self.config = {
             "base_lr": 0.0001,
             "loss": "sparse_categorical_crossentropy",
@@ -83,7 +85,6 @@ class main_flow(FlowSpec):
             train_dataset = train_dataset.take(1)
             val_dataset = val_dataset.take(1)
 
-        print('Augmenting data')
         # Defining augmentations
         augmenter = keras.Sequential(
             [
@@ -102,18 +103,14 @@ class main_flow(FlowSpec):
             self.config['img_size'], self.config['img_size'], pad_to_aspect_ratio=True, bounding_box_format=self.config['bbox_format']
         )
 
-        print("Augmenting")
-
         # Augmenting training set/resizing validation set
         train_dataset = train_dataset.map(augmenter, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(inference_resizing, num_parallel_calls=tf.data.AUTOTUNE)
 
-        print("dict to tuple")
         # Converting data into tuples suitable for training
         train_dataset = train_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
 
-        print("Saving to TF Record")
         # Save augmented dataset to TFRecord
         augmented_train_dir, augmented_val_dir = 'augmented_train', 'augmented_val'
 
@@ -287,6 +284,8 @@ class main_flow(FlowSpec):
         from utils import class_mapping, parse_tfrecord_fn, convert_format_keras_to_wandb, create_model
         from keras_cv import bounding_box
 
+        print('Evaluating model')
+
         run = wandb.init(
             project=os.getenv('WANDB_PROJECT'),
             entity=os.getenv('WANDB_ENTITY'),
@@ -382,6 +381,7 @@ class main_flow(FlowSpec):
         import keras_cv
         from keras_cv import bounding_box
 
+        print('Deploying model')
         # generate a signature for the endpoint, using timestamp as a convention
         ENDPOINT_NAME = f'detection-{int(round(time.time() * 1000))}-endpoint'
         # print out the name, so that we can use it when deploying our lambda
