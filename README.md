@@ -89,8 +89,8 @@ At this point you should decide if you want to run the training step of the flow
     'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
     'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
 ```
-- **For AWS GPU compute**: Comment out the `@batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow")` decorator.
-- **For AWS CPU compute**: Comment out the `@batch(memory=15360, queue="job-queue-metaflow")`
+- **For AWS GPU compute**: Comment out the `@batch(memory=15360, queue="job-queue-metaflow")`
+- **For AWS CPU compute**: Comment out the `@batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow")` decorator.
 - **For local compute**: Comment out all four decorators.
 
 In addition, you should set the arn of your the Sagemaker role as a Metaflow paramater:
