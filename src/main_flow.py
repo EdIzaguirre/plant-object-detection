@@ -1,4 +1,4 @@
-from metaflow import FlowSpec, step, current, batch, S3, environment
+from metaflow import FlowSpec, Parameter, step, current, batch, S3, environment
 from custom_decorators import pip
 import os
 import time
@@ -12,8 +12,21 @@ except ImportError:
     print("Env file not found!")
 
 
-# @conda_base(python='3.11.9')
 class main_flow(FlowSpec):
+    TESTING = Parameter(
+        name='testing',
+        help='Determines if only one batch of data is used for testing purposes',
+        default=True)
+
+    TRAINING_IMAGE = Parameter(
+        name='training_image',
+        help='AWS Docker Image URI for AWS Batch training',
+        default='docker.io/tensorflow/tensorflow:latest-gpu')
+
+    SAGEMAKER_INSTANCE = Parameter(
+        name='sagemaker_instance',
+        help='AWS Instance to Power SageMaker Inference',
+        default='ml.t2.medium')
 
     @step
     def start(self):
@@ -31,6 +44,8 @@ class main_flow(FlowSpec):
         assert os.environ['WANDB_ENTITY']
         assert os.environ['WANDB_PROJECT']
         assert os.environ['S3_BUCKET_ADDRESS']
+        assert os.environ['KAGGLE_USERNAME']
+        assert os.environ['KAGGLE_KEY']
 
         self.next(self.augment_data)
 
@@ -54,8 +69,6 @@ class main_flow(FlowSpec):
             "num_examples": 4,
             "bbox_format": "xyxy",
             "img_size": 416,
-            "testing": True,
-            "aws_batch": True,
         }
 
         def download_from_s3(s3_path, local_path):
@@ -64,15 +77,11 @@ class main_flow(FlowSpec):
             with open(local_path, 'wb') as f:
                 f.write(s3_blob)
 
-        if self.config['aws_batch']:
-            s3_base_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
-            self.train_tfrecord_file = 'train_leaves.tfrecord'
-            self.val_tfrecord_file = 'val_test_leaves.tfrecord'
-            download_from_s3(s3_base_path + 'leaves.tfrecord', self.train_tfrecord_file)
-            download_from_s3(s3_base_path + 'test_leaves.tfrecord', self.val_tfrecord_file)
-        else:
-            self.train_tfrecord_file = '../data_raw/leaves.tfrecord'
-            self.val_tfrecord_file = '../data_raw/test_leaves.tfrecord'
+        s3_base_path = 's3://' + os.getenv('S3_BUCKET_ADDRESS') + '/raw_data/'
+        self.train_tfrecord_file = 'train_leaves.tfrecord'
+        self.val_tfrecord_file = 'val_test_leaves.tfrecord'
+        download_from_s3(s3_base_path + 'leaves.tfrecord', self.train_tfrecord_file)
+        download_from_s3(s3_base_path + 'test_leaves.tfrecord', self.val_tfrecord_file)
 
         def create_dataset(tfrecord_file):
             return tf.data.TFRecordDataset([tfrecord_file]).map(parse_tfrecord_fn).ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
@@ -81,7 +90,7 @@ class main_flow(FlowSpec):
         val_dataset = create_dataset(self.val_tfrecord_file)
 
         # Testing with only one batch
-        if self.config['testing']:
+        if self.TESTING:
             train_dataset = train_dataset.take(1)
             val_dataset = val_dataset.take(1)
 
@@ -137,7 +146,7 @@ class main_flow(FlowSpec):
         self.next(self.train_model)
 
     @pip(libraries={'tensorflow': '2.15', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.3'})
-    # @batch(gpu=1, memory=8192, image="docker.io/tensorflow/tensorflow:latest-gpu", queue="job-queue-gpu-metaflow")
+    # @batch(gpu=1, memory=8192, image=self.TRAINING_IMAGE, queue="job-queue-gpu-metaflow")
     @batch(memory=15360, queue="job-queue-metaflow")
     @environment(vars={
         "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
@@ -389,16 +398,16 @@ class main_flow(FlowSpec):
         model = TensorFlowModel(
             model_data=self.s3_path,
             framework_version='2.14',
-            role="arn:aws:iam::905418240029:role/service-role/AmazonSageMaker-ExecutionRole-20240416T093215")
+            role=os.environ['IAM_ROLE_SAGEMAKER'])
 
         predictor = model.deploy(
             initial_instance_count=1,
-            instance_type='ml.t2.medium',
+            instance_type=self.SAGEMAKER_INSTANCE,
             endpoint_name=ENDPOINT_NAME)
 
-        # Uncomment this if you already have an endpoint up
+        # Uncomment this if you already have an endpoint up, copy and past correct endpoint name
         # predictor = TensorFlowPredictor(
-        #     endpoint_name='detection-1719520877675-endpoint',
+        #     endpoint_name='detection-xxxxxxxxx-endpoint',
         # )
 
         # Get a sample image to test the endpoint
@@ -446,6 +455,10 @@ class main_flow(FlowSpec):
 
             print(f"boxes: {self.box_list}")
             print(f"classes: {self.classes_list}")
+
+        print("Deleting endpoint now...")
+        predictor.delete_endpoint()
+        print("Endpoint deleted!")
 
         self.next(self.end)
 
