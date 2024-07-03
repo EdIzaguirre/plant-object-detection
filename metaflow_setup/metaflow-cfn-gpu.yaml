@@ -19,25 +19,32 @@ Parameters:
     Type: String
     Default: 10.20.1.0/24
     Description: 'CIDR for Metaflow VPC Subnet 2'
+  MinVCPUBatch:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 16
+    AllowedValues: [0,1,2,4,8,16]
+    Description: 'Minimum VCPUs for Batch Compute Environment [0-16] for EC2 Batch Compute Environment (ignored for Fargate)'  
   MaxVCPUBatch:
     Type: Number
     Default: 64
     MinValue: 16
     MaxValue: 256
     Description: 'Maximum VCPUs for Batch Compute Environment [16-256]. You can change the upper limit by editing the Cloudformation template.'
+  MinVCPUBatchGPUEnv:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 16
+    AllowedValues: [0,1,2,4,8,16]
+    Description: 'Minimum VCPUs for Batch Compute Environment [0-16] in your GPU compute environment.'
   MaxVCPUBatchGPUEnv:
     Type: Number
     Default: 64
     MinValue: 16
     MaxValue: 256
     Description: 'Maximum VCPUs for Batch Compute Environment [16-256] in your GPU compute environment. You can change the upper limit by editing the Cloudformation template.'
-  MinVCPUBatch:
-    Type: Number
-    Default: 0
-    MinValue: 0
-    MaxValue: 16
-    AllowedValues: [0,2,4,8,16]
-    Description: 'Minimum VCPUs for Batch Compute Environment [0-16] for EC2 Batch Compute Environment (ignored for Fargate)'
   DesiredVCPUBatch:
     Type: Number
     Default: 8
@@ -1426,7 +1433,7 @@ Resources:
         Subnets:
           - !Ref Subnet1
           - !Ref Subnet2
-        MinvCpus: !If [EnableFargateOnBatch, !Ref AWS::NoValue, !Ref MinVCPUBatch]
+        MinvCpus: !If [EnableFargateOnBatch, !Ref AWS::NoValue, !Ref MinVCPUBatchGPUEnv]
         InstanceRole: !If [EnableFargateOnBatch, !Ref AWS::NoValue, !GetAtt 'ECSInstanceProfile.Arn']
         InstanceTypes: !If [EnableFargateOnBatch, !Ref AWS::NoValue, !Ref GPUComputeEnvInstanceTypes]
         DesiredvCpus: !If [EnableFargateOnBatch, !Ref AWS::NoValue, !Ref DesiredVCPUBatch]
