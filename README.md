@@ -107,7 +107,7 @@ TESTING = Parameter(
         default=True)
 ```
 
-There are also parameters for the docker image used for training (`TRAINING_IMAGE`) and the instance used to power the AWS Sagemaker endpoint (`SAGEMAKER_INSTANCE`). The docker image is the latest Tensorflow image `docker.io/tensorflow/tensorflow:latest-gpu`. I have chosen a cheap instance for the Sagemaker endpoint: `ml.t2.medium`; feel free to upgrade this for better performance.
+There is also a parameter for the instance used to power the AWS Sagemaker endpoint (`SAGEMAKER_INSTANCE`). I have chosen a cheap instance for the Sagemaker endpoint: `ml.t2.medium`; feel free to upgrade this for better performance.
 
 ### 6) Run the flow!
 Now change directories into the `src/` folder. And run the flow.

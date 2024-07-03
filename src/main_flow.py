@@ -18,11 +18,6 @@ class main_flow(FlowSpec):
         help='Determines if only one batch of data is used for testing purposes',
         default=True)
 
-    TRAINING_IMAGE = Parameter(
-        name='training_image',
-        help='AWS Docker Image URI for AWS Batch training',
-        default='docker.io/tensorflow/tensorflow:latest-gpu')
-
     SAGEMAKER_INSTANCE = Parameter(
         name='sagemaker_instance',
         help='AWS Instance to Power SageMaker Inference',
@@ -46,6 +41,7 @@ class main_flow(FlowSpec):
         assert os.environ['S3_BUCKET_ADDRESS']
         assert os.environ['KAGGLE_USERNAME']
         assert os.environ['KAGGLE_KEY']
+        assert os.environ['IAM_ROLE_SAGEMAKER']
 
         self.next(self.augment_data)
 
@@ -62,8 +58,8 @@ class main_flow(FlowSpec):
         self.config = {
             "base_lr": 0.0001,
             "loss": "sparse_categorical_crossentropy",
-            "epoch": 2,
-            "batch_size": 16,
+            "epoch": 15,
+            "batch_size": 32,
             "classification_loss": "focal",
             "box_loss": "smoothl1",
             "num_examples": 4,
@@ -146,8 +142,8 @@ class main_flow(FlowSpec):
         self.next(self.train_model)
 
     @pip(libraries={'tensorflow': '2.15', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.3'})
-    # @batch(gpu=1, memory=8192, image=self.TRAINING_IMAGE, queue="job-queue-gpu-metaflow")
-    @batch(memory=15360, queue="job-queue-metaflow")
+    @batch(gpu=1, memory=8192, image='docker.io/tensorflow/tensorflow:latest-gpu', queue="job-queue-gpu-metaflow")
+    # @batch(memory=15360, queue="job-queue-metaflow")
     @environment(vars={
         "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
         'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
@@ -205,7 +201,7 @@ class main_flow(FlowSpec):
             # Conducting early stopping to stop after 2 epochs of non-improving validation loss
             keras.callbacks.EarlyStopping(
                 monitor="val_loss",
-                patience=2,
+                patience=3,
             ),
 
             # Saving the best model
