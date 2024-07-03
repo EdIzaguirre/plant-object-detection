@@ -111,7 +111,6 @@ Endpoint name is: detection-xxxxxxxxxxx-endpoint
 ```
 in addition to a received prediceted bounding boxes for a sample image, as well as a final congratulations message:
 ```
-
 All done. 
 
 Congratulations! Plants around the world will thank you.
