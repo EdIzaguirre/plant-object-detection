@@ -76,7 +76,7 @@ This will change directories out of the `mf_configure/` folder and programatical
 
 There should be a success message if the data has been successfully uploaded.
 
-### 6) Configure your flow
+### 5) Configure your flow
 At this point you should decide if you want to run the training step of the flow locally, on a provisioned CPU in AWS, or a provisioned GPU in AWS. This will involve commenting out decorators. The following decorators are located above the `train_model` step:
 
 ```
