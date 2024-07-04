@@ -98,15 +98,6 @@ At this point you should decide if you want to run the training step of the flow
 
 By default, the code is configured to run on a CPU instance in AWS Batch.
 
-You should also consider running a test of the flow with only one batch, to make sure that the flow is working. This is the default setup in this repo. To run on all of the data, modify the TESTING parameter: 
-
-```
-TESTING = Parameter(
-        name='testing',
-        help='Determines if only one batch of data is used for testing purposes',
-        default=True)
-```
-
 There is also a parameter for the instance used to power the AWS Sagemaker endpoint (`SAGEMAKER_INSTANCE`). I have chosen a cheap instance for the Sagemaker endpoint: `ml.t2.medium`; feel free to upgrade this for better performance.
 
 ### 6) Run the flow!
@@ -116,6 +107,9 @@ Now change directories into the `src/` folder. And run the flow.
 cd src
 python main_flow.py run
 ```
+
+By default, the code is set up to test the flow with a single batch of data. If you would like to run the code with the full dataset, replace `python main_flow.py run` with `python main_flow.py run --testing=False`.
+
 This will run the Metaflow flow. If successful, you should be able to see the endpoint that has been deployed to Sagemaker:
 
 ```
