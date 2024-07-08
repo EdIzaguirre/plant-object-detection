@@ -28,6 +28,8 @@ This project uses Metaflow as the orchestration and infrastructure abstraction t
 - **Model evaluation: Weights and Biases**. All training metrics including MaP, training loss, and ground truth vs. predicted bounding boxes are logged in WandB.
 - **Model deployment: AWS Sagemaker**. The trained model is sent to an AWS Sagemaker endpoint, where it can provide predictions for images submitted into the application.
 
+*Note:* the *Transform Data* and *Train Model* steps are actualy combined into one step in the code. Originally they were seperated; however, this meant the transformed data had to be uploaded to S3 and then downloaded in the train step, which took a long time. Checkout the *separate_augment_and_train* branch to see what separated steps would look like. 
+
 ## Prerequistes
 The following packages must be installed and configured before you are able to run the project:
 - [Weights and Biases](https://docs.wandb.ai/quickstart): Install the wandb client and log into wandb from the command line. In addition, you will need to create a project in the W&B web portal. Title it anything you want, and make note of both the project name and your username (entity). Both of these values will be needed for the next steps. 
@@ -122,8 +124,13 @@ All done.
 Congratulations! Plants around the world will thank you.
 ```
 
-The code is configured to automatically delete the Sagemaker endpoint after testing it. If you'd like to keep the endpoint, comment out this code. 
+The code is configured to automatically delete the Sagemaker endpoint after testing it. If you'd like to keep the endpoint, comment out this code. **Make sure to delete your AWS Cloud Formation stack when finished, to avoid incurring costs!**
 
 You can now go and evaluate your model's performance on a slice of the validation data in the Weights and Biases dashboard. By logging into the WandB website and selecting your run, you can see the ground truth bounding boxes and the predicted bounding boxes provided in a table.
 
-**Make sure to delete your AWS Cloud Formation stack when finished, to avoid incurring costs!**
+![Predictions seen on WandB table](images/wandb_table.png)
+
+We can also observe charts detailing important training info, including MaP vs. epoch, box loss vs. epoch, classification loss vs. epoch, etc. 
+
+![Charts seen on WandB table](images/wandb_charts.png)
+
