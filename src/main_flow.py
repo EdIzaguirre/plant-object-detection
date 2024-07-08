@@ -46,8 +46,8 @@ class main_flow(FlowSpec):
         self.next(self.augment_data_train_model)
 
     @pip(libraries={'tensorflow': '2.15', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.3'})
-    @batch(gpu=1, memory=8192, image='docker.io/tensorflow/tensorflow:latest-gpu', queue="job-queue-gpu-metaflow")
-    # @batch(memory=15360, queue="job-queue-metaflow") 
+    # @batch(gpu=1, memory=8192, image='docker.io/tensorflow/tensorflow:latest-gpu', queue="job-queue-gpu-metaflow")
+    @batch(memory=15360, queue="job-queue-metaflow") 
     @environment(vars={
         "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
         'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
@@ -74,10 +74,12 @@ class main_flow(FlowSpec):
             "batch_size": 32,
             "classification_loss": "focal",
             "box_loss": "smoothl1",
-            "num_examples": 4,
+            "num_examples": 6,
             "bbox_format": "xyxy",
             "img_size": 416,
-            "patience": 6
+            "patience": 6,
+            "iou_threshold": 0.2,
+            "confidence_threshold": 0.6
         }
 
         def download_from_s3(s3_path, local_path):
@@ -260,12 +262,12 @@ class main_flow(FlowSpec):
         model = create_model(config=config)
         model.set_weights(self.model['model_weights'])
 
-        # Customizing non-max supression of model prediction. I found these numbers to work fairly well
+        # Customizing non-max supression of model prediction. You may have to customize iou_threshold and confidence_threshold
         model.prediction_decoder = keras_cv.layers.MultiClassNonMaxSuppression(
             bounding_box_format=self.config['bbox_format'],
             from_logits=True,
-            iou_threshold=0.2,
-            confidence_threshold=0.6,
+            iou_threshold=self.config['iou_threshold'],
+            confidence_threshold=self.config['confidence_threshold'],
         )
 
         for example in val_dataset.take(config.num_examples):
@@ -287,29 +289,35 @@ class main_flow(FlowSpec):
 
             # Get image as a tensor, include a batch dimension
             image = example["images"]
-            image = tf.expand_dims(image, axis=0)  # Shape: (1, 416, 416, 3)
+            self.image = tf.expand_dims(image, axis=0)  # Shape: (1, 416, 416, 3)
 
             # Get predicted bounding boxes on image
-            y_pred = model.predict(image)
-            y_pred = bounding_box.to_ragged(y_pred)
-            boxes = y_pred['boxes']
-            classes = y_pred['classes']
+            y_pred = model.predict(self.image)
+
+            confidence = y_pred['confidence'][0]
+            self.confidence = [conf for conf in confidence if conf != -1]
+
+            self.y_pred = bounding_box.to_ragged(y_pred)
+            self.boxes = self.y_pred['boxes']
+            self.classes = self.y_pred['classes']
 
             # Convert the ragged tensor to a list of lists
-            box_list = boxes.to_list()
-            classes_list = classes.to_list()
+            self.box_list = self.boxes.to_list()
+            self.classes_list = self.classes.to_list()
 
             # Remove batch dimension
-            box_list = box_list[0]
-            classes_list = classes_list[0]
+            self.box_list = self.box_list[0]
+            self.classes_list = self.classes_list[0]
 
-            if not box_list:
-                print("No bounding boxes predicted for any test image.")
+            if not self.box_list:
+                print("No bounding boxes predicted for test image.")
                 predicted_image = wandb.Image(
                     image
                 )
             else:
-                all_boxes = convert_format_keras_to_wandb(box_list=box_list, classes_list=classes_list)
+                all_boxes = convert_format_keras_to_wandb(box_list=self.box_list,
+                                                          classes_list=self.classes_list,
+                                                          confidence_list=self.confidence)
 
                 predicted_image = wandb.Image(
                     image,
@@ -354,7 +362,7 @@ class main_flow(FlowSpec):
 
         # Uncomment this if you already have an endpoint up, copy and past correct endpoint name
         # predictor = TensorFlowPredictor(
-        #     endpoint_name='detection-xxxxxxxxx-endpoint',
+        #     endpoint_name='detection-1720463605573-endpoint',
         # )
 
         # Get a sample image to test the endpoint
@@ -403,8 +411,8 @@ class main_flow(FlowSpec):
             print(f"boxes: {self.box_list}")
             print(f"classes: {self.classes_list}")
 
-        print("Deleting endpoint now...")
-        predictor.delete_endpoint()
+        # print("Deleting endpoint now...")
+        # predictor.delete_endpoint()
         print("Endpoint deleted!")
 
         self.next(self.end)
