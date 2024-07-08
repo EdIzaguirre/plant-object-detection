@@ -21,7 +21,7 @@ Parameters:
     Description: 'CIDR for Metaflow VPC Subnet 2'
   MinVCPUBatch:
     Type: Number
-    Default: 1
+    Default: 0
     MinValue: 0
     MaxValue: 16
     AllowedValues: [0,1,2,4,8,16]
