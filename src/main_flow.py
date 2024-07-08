@@ -2,7 +2,6 @@ from metaflow import FlowSpec, Parameter, step, current, batch, S3, environment
 from custom_decorators import pip
 import os
 import time
-import shutil
 
 # Loading environment variables
 try:
