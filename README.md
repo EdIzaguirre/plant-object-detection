@@ -102,6 +102,9 @@ By default, the code is configured to run on a CPU instance in AWS Batch.
 
 There is also a parameter for the instance used to power the AWS Sagemaker endpoint (`SAGEMAKER_INSTANCE`). I have chosen a cheap instance for the Sagemaker endpoint: `ml.t2.medium`; feel free to upgrade this for better performance.
 
+Finally, you will have to customize the `iou_threshold` and `confidence_threshold` values for in the config dictionary. These
+values control the non-max suppression algorithm in the RetinaNet object detector. Non-max supression takes all of the bounding boxes predicted by the model and prunes them by only selecting boxes that have high confidence and that don't overlap too much with respect to the intersection over union (IoU) threshold. To learn more about non-max suppression, see [this article](https://www.tensorflow.org/api_docs/python/tf/image/combined_non_max_suppression).
+
 ### 6) Run the flow!
 Now change directories into the `src/` folder. And run the flow.
 
