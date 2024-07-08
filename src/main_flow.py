@@ -412,7 +412,7 @@ class main_flow(FlowSpec):
             print(f"classes: {self.classes_list}")
 
         # print("Deleting endpoint now...")
-        # predictor.delete_endpoint()
+        predictor.delete_endpoint()
         print("Endpoint deleted!")
 
         self.next(self.end)
