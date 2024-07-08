@@ -171,13 +171,13 @@ class main_flow(FlowSpec):
         model = create_model(config=config)
 
         print('Beginning model training')
-        # model.fit(
-        #     train_dataset,
-        #     validation_data=val_dataset,
-        #     epochs=config.epoch,
-        #     callbacks=callbacks_list,
-        #     verbose=0,
-        # )
+        model.fit(
+            train_dataset,
+            validation_data=val_dataset,
+            epochs=config.epoch,
+            callbacks=callbacks_list,
+            verbose=0,
+        )
 
         # Create model with the weights of the best model
         model = create_model(config=config)

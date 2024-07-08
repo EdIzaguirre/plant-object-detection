@@ -130,8 +130,13 @@ All done.
 Congratulations! Plants around the world will thank you.
 ```
 
-The code is configured to automatically delete the Sagemaker endpoint after testing it. If you'd like to keep the endpoint, comment out this code. 
+The code is configured to automatically delete the Sagemaker endpoint after testing it. If you'd like to keep the endpoint, comment out this code. **Make sure to delete your AWS Cloud Formation stack when finished, to avoid incurring costs!**
 
 You can now go and evaluate your model's performance on a slice of the validation data in the Weights and Biases dashboard. By logging into the WandB website and selecting your run, you can see the ground truth bounding boxes and the predicted bounding boxes provided in a table.
 
-**Make sure to delete your AWS Cloud Formation stack when finished, to avoid incurring costs!**
+![Predictions seen on WandB table](images/wandb_table.png)
+
+We can also observe charts detailing important training info, including MaP vs. epoch, box loss vs. epoch, classification loss vs. epoch, etc. 
+
+![Charts seen on WandB table](images/wandb_charts.png)
+
