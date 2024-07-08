@@ -43,28 +43,41 @@ class main_flow(FlowSpec):
         assert os.environ['KAGGLE_KEY']
         assert os.environ['IAM_ROLE_SAGEMAKER']
 
-        self.next(self.augment_data)
+        self.next(self.augment_data_train_model)
 
+    @pip(libraries={'tensorflow': '2.15', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.3'})
+    @batch(gpu=1, memory=8192, image='docker.io/tensorflow/tensorflow:latest-gpu', queue="job-queue-gpu-metaflow")
+    # @batch(memory=15360, queue="job-queue-metaflow") 
+    @environment(vars={
+        "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
+        'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
+        'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
+        'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
     @step
-    def augment_data(self):
-        from utils import parse_tfrecord_fn, dict_to_tuple
+    def augment_data_train_model(self):
         import tensorflow as tf
+        from utils import create_model, parse_tfrecord_fn, dict_to_tuple
         import keras
-        import keras_cv
+        import wandb
+        from wandb.integration.keras import WandbMetricsLogger, WandbModelCheckpoint
         import tarfile
+        import keras_cv
+
+        print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
         print('Augmenting data')
 
         self.config = {
             "base_lr": 0.0001,
             "loss": "sparse_categorical_crossentropy",
-            "epoch": 15,
+            "epoch": 40,
             "batch_size": 32,
             "classification_loss": "focal",
             "box_loss": "smoothl1",
             "num_examples": 4,
             "bbox_format": "xyxy",
             "img_size": 416,
+            "patience": 6
         }
 
         def download_from_s3(s3_path, local_path):
@@ -79,11 +92,8 @@ class main_flow(FlowSpec):
         download_from_s3(s3_base_path + 'leaves.tfrecord', self.train_tfrecord_file)
         download_from_s3(s3_base_path + 'test_leaves.tfrecord', self.val_tfrecord_file)
 
-        def create_dataset(tfrecord_file):
-            return tf.data.TFRecordDataset([tfrecord_file]).map(parse_tfrecord_fn).ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
-
-        train_dataset = create_dataset(self.train_tfrecord_file)
-        val_dataset = create_dataset(self.val_tfrecord_file)
+        train_dataset = tf.data.TFRecordDataset(self.train_tfrecord_file).map(parse_tfrecord_fn).ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
+        val_dataset = tf.data.TFRecordDataset(self.val_tfrecord_file).map(parse_tfrecord_fn).ragged_batch(self.config['batch_size']).prefetch(buffer_size=tf.data.AUTOTUNE)
 
         # Testing with only one batch
         if self.TESTING:
@@ -116,74 +126,6 @@ class main_flow(FlowSpec):
         train_dataset = train_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
         val_dataset = val_dataset.map(dict_to_tuple, num_parallel_calls=tf.data.AUTOTUNE)
 
-        # Save augmented dataset to TFRecord
-        augmented_train_dir, augmented_val_dir = 'augmented_train', 'augmented_val'
-
-        # Clear the directories before saving new data
-        if os.path.exists(augmented_train_dir):
-            shutil.rmtree(augmented_train_dir)
-        if os.path.exists(augmented_val_dir):
-            shutil.rmtree(augmented_val_dir)
-
-        tf.data.Dataset.save(train_dataset, augmented_train_dir)
-        tf.data.Dataset.save(val_dataset, augmented_val_dir)
-
-        def upload_to_s3(local_path, s3_path):
-            with tarfile.open(f"{local_path}.tar.gz", mode="w:gz") as tar:
-                tar.add(local_path, recursive=True)
-            with open(f"{local_path}.tar.gz", "rb") as f:
-                data = f.read()
-                with S3(run=self) as s3:
-                    return s3.put(f"{local_path}.tar.gz", data)
-
-        self.augmented_train_url = upload_to_s3(augmented_train_dir, f"{augmented_train_dir}.tar.gz")
-        self.augmented_val_url = upload_to_s3(augmented_val_dir, f"{augmented_val_dir}.tar.gz")
-
-        self.next(self.train_model)
-
-    @pip(libraries={'tensorflow': '2.15', 'keras-cv': '0.9.0', 'pycocotools': '2.0.7', 'wandb': '0.17.3'})
-    @batch(gpu=1, memory=8192, image='docker.io/tensorflow/tensorflow:latest-gpu', queue="job-queue-gpu-metaflow")
-    # @batch(memory=15360, queue="job-queue-metaflow")
-    @environment(vars={
-        "S3_BUCKET_ADDRESS": os.getenv('S3_BUCKET_ADDRESS'),
-        'WANDB_API_KEY': os.getenv('WANDB_API_KEY'),
-        'WANDB_PROJECT': os.getenv('WANDB_PROJECT'),
-        'WANDB_ENTITY': os.getenv('WANDB_ENTITY')})
-    @step
-    def train_model(self):
-        import tensorflow as tf
-        from utils import create_model
-        import keras
-        import wandb
-        from wandb.integration.keras import WandbMetricsLogger, WandbModelCheckpoint
-        import tarfile
-
-        print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
-
-        # Load augmented datasets
-        augmented_train_dir = 'augmented_train'
-        augmented_val_dir = 'augmented_val'
-
-        # Download augmented dataset from S3
-        with S3() as s3:
-            augmented_train_blob = s3.get(self.augmented_train_url).blob
-            augmented_val_blob = s3.get(self.augmented_val_url).blob
-
-        augmented_train_archive, augmented_val_archive = 'augmented_train.tar.gz', 'augmented_val.tar.gz'
-
-        with open(augmented_train_archive, 'wb') as f:
-            f.write(augmented_train_blob)
-        with open(augmented_val_archive, 'wb') as f:
-            f.write(augmented_val_blob)
-
-        with tarfile.open(augmented_train_archive, mode="r:gz") as tar:
-            tar.extractall()
-        with tarfile.open(augmented_val_archive, mode="r:gz") as tar:
-            tar.extractall()
-
-        train_dataset = tf.data.Dataset.load(augmented_train_dir)
-        val_dataset = tf.data.Dataset.load(augmented_val_dir)
-
         # Start a run, tracking hyperparameters
         run = wandb.init(
             project=os.getenv('WANDB_PROJECT'),
@@ -201,7 +143,7 @@ class main_flow(FlowSpec):
             # Conducting early stopping to stop after 2 epochs of non-improving validation loss
             keras.callbacks.EarlyStopping(
                 monitor="val_loss",
-                patience=3,
+                patience=self.config['patience'],
             ),
 
             # Saving the best model
@@ -221,7 +163,7 @@ class main_flow(FlowSpec):
                       f"Validation Loss: {logs['val_loss']:.4f} \n" +
                       f"Validation mAP: {logs['val_MaP']:.4f} \n")
             ),
-            WandbMetricsLogger(log_freq=5),
+            WandbMetricsLogger(log_freq="epoch"),
 
             WandbModelCheckpoint("models")
         ]
@@ -229,13 +171,13 @@ class main_flow(FlowSpec):
         model = create_model(config=config)
 
         print('Beginning model training')
-        model.fit(
-            train_dataset,
-            validation_data=val_dataset,
-            epochs=config.epoch,
-            callbacks=callbacks_list,
-            verbose=0,
-        )
+        # model.fit(
+        #     train_dataset,
+        #     validation_data=val_dataset,
+        #     epochs=config.epoch,
+        #     callbacks=callbacks_list,
+        #     verbose=0,
+        # )
 
         # Create model with the weights of the best model
         model = create_model(config=config)
@@ -287,6 +229,7 @@ class main_flow(FlowSpec):
         import wandb
         import tensorflow as tf
         from utils import class_mapping, parse_tfrecord_fn, convert_format_keras_to_wandb, create_model
+        import keras_cv
         from keras_cv import bounding_box
 
         print('Evaluating model')
@@ -316,6 +259,14 @@ class main_flow(FlowSpec):
 
         model = create_model(config=config)
         model.set_weights(self.model['model_weights'])
+
+        # Customizing non-max supression of model prediction. I found these numbers to work fairly well
+        model.prediction_decoder = keras_cv.layers.MultiClassNonMaxSuppression(
+            bounding_box_format=self.config['bbox_format'],
+            from_logits=True,
+            iou_threshold=0.2,
+            confidence_threshold=0.6,
+        )
 
         for example in val_dataset.take(config.num_examples):
             image, bounding_box_dict = example["images"].numpy(), example["bounding_boxes"]
