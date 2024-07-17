@@ -113,14 +113,14 @@ cd src
 python main_flow.py run
 ```
 
-By default, the code is set up to test the flow with a single batch of data. If you would like to run the code with the full dataset, replace `python main_flow.py run` with `python main_flow.py run --testing=False`.
+By default, the code is set up to test the flow with a single batch of data and only two epochs. If you would like to run the code with the full dataset, replace `python main_flow.py run` with `python main_flow.py run --testing=False`.
 
 This will run the Metaflow flow. If successful, you should be able to see the endpoint that has been deployed to Sagemaker:
 
 ```
 Endpoint name is: detection-xxxxxxxxxxx-endpoint
 ```
-in addition to predicted bounding boxes for a sample image obtained from your running endpoint. In addition, you will get a congratulatory message:
+in addition to predicted bounding boxes for a sample image obtained from your running endpoint. You will also get a congratulatory message:
 ```
 All done. 
 
@@ -129,7 +129,7 @@ Congratulations! Plants around the world will thank you.
 
 The code is configured to automatically delete the Sagemaker endpoint after testing it. If you'd like to keep the endpoint, comment out this code. **Make sure to delete your AWS Cloud Formation stack when finished, to avoid incurring costs!**
 
-You can now go and evaluate your model's performance on a slice of the validation data in the Weights and Biases dashboard. By logging into the WandB website and selecting your run, you can see the ground truth bounding boxes and the predicted bounding boxes provided in a table.
+You can now go and evaluate your model's performance on a slice of the validation data in the Weights and Biases dashboard. By logging into the WandB website and selecting your run, you can see the ground truth bounding boxes and the predicted bounding boxes provided in a table. Unfortunately there is a bug where the table seems to get logged two/three times, I am currently trying to figure out the issue.
 
 ![Predictions seen on WandB table](images/wandb_table.png)
 
