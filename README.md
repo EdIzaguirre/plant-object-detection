@@ -120,7 +120,7 @@ This will run the Metaflow flow. If successful, you should be able to see the en
 ```
 Endpoint name is: detection-xxxxxxxxxxx-endpoint
 ```
-in addition to predicted bounding boxes for a sample image obtained from your running endpoint. In addition, you will get a congratulatory message:
+in addition to predicted bounding boxes for a sample image obtained from your running endpoint. You will also get a congratulatory message:
 ```
 All done. 
 
