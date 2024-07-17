@@ -113,7 +113,7 @@ cd src
 python main_flow.py run
 ```
 
-By default, the code is set up to test the flow with a single batch of data. If you would like to run the code with the full dataset, replace `python main_flow.py run` with `python main_flow.py run --testing=False`.
+By default, the code is set up to test the flow with a single batch of data and only two epochs. If you would like to run the code with the full dataset, replace `python main_flow.py run` with `python main_flow.py run --testing=False`.
 
 This will run the Metaflow flow. If successful, you should be able to see the endpoint that has been deployed to Sagemaker:
 
