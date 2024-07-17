@@ -100,6 +100,7 @@ class main_flow(FlowSpec):
         if self.TESTING:
             train_dataset = train_dataset.take(1)
             val_dataset = val_dataset.take(1)
+            self.config["epoch"] = 2
 
         # Defining augmentations
         augmenter = keras.Sequential(
@@ -331,6 +332,7 @@ class main_flow(FlowSpec):
 
             table.add_data(ground_truth_image, predicted_image)
 
+        print("Logging table.")
         wandb.log({"Plant Disease Predictions": table})
         run.finish()
 
