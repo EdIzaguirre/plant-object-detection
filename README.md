@@ -129,7 +129,7 @@ Congratulations! Plants around the world will thank you.
 
 The code is configured to automatically delete the Sagemaker endpoint after testing it. If you'd like to keep the endpoint, comment out this code. **Make sure to delete your AWS Cloud Formation stack when finished, to avoid incurring costs!**
 
-You can now go and evaluate your model's performance on a slice of the validation data in the Weights and Biases dashboard. By logging into the WandB website and selecting your run, you can see the ground truth bounding boxes and the predicted bounding boxes provided in a table.
+You can now go and evaluate your model's performance on a slice of the validation data in the Weights and Biases dashboard. By logging into the WandB website and selecting your run, you can see the ground truth bounding boxes and the predicted bounding boxes provided in a table. Unfortunately there is a bug where the table seems to get logged two/three times, I am currently trying to figure out the issue.
 
 ![Predictions seen on WandB table](images/wandb_table.png)
 
