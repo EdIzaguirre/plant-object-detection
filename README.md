@@ -8,7 +8,9 @@ This is a production-grade machine learning application that uses object detecti
 to learn how to create an end-to-end computer vision application using Metaflow as the primary orchestration tool. Inspiration was taken from the notable 
 [You Don't Need a Bigger Boat](https://github.com/jacopotagliabue/you-dont-need-a-bigger-boat) repo, which shows a more complicated flow based on training a recommendation model.
 
-Check out [this article](https://medium.com/towards-data-science/object-detection-using-retinanet-and-kerascv-b07940327b6c) I wrote in _Towards Data Science_ discussing an earlier, dev project I made using the same dataset in a Jupyter notebook.
+I have written two articles in _Towards Data Science_ regarding this repository:
+- [This is the primary article](https://medium.com/towards-data-science/streamlining-object-detection-with-metaflow-aws-and-weights-biases-b44a14cb2e11) that covers the lessons I learned while making this repository. 
+- [This is an earlier article](https://medium.com/towards-data-science/object-detection-using-retinanet-and-kerascv-b07940327b6c) I wrote discussing a very similar, dev-oriented project written entirely in a Jupyter notebook.
 
 ## Data Source
 The data for this project is from the [PlantDoc dataset](https://public.roboflow.com/object-detection/plantdoc?ref=blog.roboflow.com), published on the Roboflow website. 
